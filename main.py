@@ -4,19 +4,19 @@ import sys
 import os
 import warnings
 from collections import deque
-from config import conf  # CLOUD CONFIG IMPORT
+from config import conf
 
 warnings.simplefilter("ignore")
 
-# TIER: RAILWAY CLOUD EDITION (FULL POWER + RICH COMMS)
+# TIER: RAILWAY CLOUD COMMANDER (RADAR + PROJECTION)
 ANCHOR_FILE = conf.get_path("equity_anchor.json")
 BTC_TICKER = "BTC"
+SESSION_START_TIME = time.time() # Used for Velocity Calculation
 
-# 🚀 EXPANDED FLEET CONFIGURATION
 FLEET_CONFIG = {
     "SOL":   {"type": "PRINCE", "lev": 10, "risk_mult": 1.0, "stop_loss": 0.03},
     "SUI":   {"type": "PRINCE", "lev": 10, "risk_mult": 1.0, "stop_loss": 0.03},
-    "ETH":   {"type": "PRINCE", "lev": 10, "risk_mult": 1.0, "stop_loss": 0.03}, 
+    "ETH":   {"type": "PRINCE", "lev": 10, "risk_mult": 1.0, "stop_loss": 0.03},
     "WIF":   {"type": "MEME",   "lev": 5,  "risk_mult": 1.0, "stop_loss": 0.05},
     "kPEPE": {"type": "MEME",   "lev": 5,  "risk_mult": 1.0, "stop_loss": 0.05},
     "DOGE":  {"type": "MEME",   "lev": 5,  "risk_mult": 1.0, "stop_loss": 0.05}
@@ -24,6 +24,7 @@ FLEET_CONFIG = {
 
 STARTING_EQUITY = 0.0
 EVENT_QUEUE = deque(maxlen=4)
+RADAR_CACHE = {} # Stores scan results for the dashboard
 
 def load_anchor(current_equity):
     try:
@@ -54,23 +55,30 @@ def normalize_positions(raw_positions):
         except: continue
     return clean_pos
 
+def calculate_projection(current_pnl):
+    # Calculate 30-Day Projection based on Session Velocity
+    elapsed_hours = (time.time() - SESSION_START_TIME) / 3600
+    if elapsed_hours < 0.1: return 0.0 # Too early to project
+    hourly_rate = current_pnl / elapsed_hours
+    monthly_proj = hourly_rate * 24 * 30
+    return monthly_proj
+
 def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", secured_list=[], new_event=None):
-    # This function writes state to volume for the Hologram Dashboard
-    global STARTING_EQUITY, EVENT_QUEUE
+    global STARTING_EQUITY, EVENT_QUEUE, RADAR_CACHE
     try:
         if STARTING_EQUITY == 0.0 and equity > 0: 
             STARTING_EQUITY = load_anchor(equity)
             
         pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
+        proj_30d = calculate_projection(pnl)
         
         if new_event:
             t = time.strftime("%H:%M:%S")
             EVENT_QUEUE.append(f"[{t}] {new_event}")
         events_str = "||".join(list(EVENT_QUEUE))
 
+        # Position String Builder
         pos_str = "NO_TRADES"
-        risk_report = []
-        
         if positions:
             pos_lines = []
             for p in positions:
@@ -84,32 +92,31 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
                 margin = (abs(size) * entry) / lev
                 roe = 0.0
                 if margin > 0: roe = (pnl_val / margin) * 100
-                
                 is_secured = coin in secured_list
                 icon = "🔒" if is_secured else "" 
-                
-                if side == "LONG": target = entry * (1 + (1/lev))
-                else: target = entry * (1 - (1/lev))
-                
-                if target < 1.0: t_str = f"{target:.6f}"
-                else: t_str = f"{target:.2f}"
-
-                pos_lines.append(f"{coin}|{side}|{pnl_val:.2f}|{roe:.1f}|{icon}|{t_str}")
-                risk_report.append(f"{coin}|{side}|{margin:.2f}|{'SECURED' if is_secured else 'RISK'}")
-
+                pos_lines.append(f"{coin}|{side}|{pnl_val:.2f}|{roe:.1f}|{icon}")
             pos_str = "::".join(pos_lines)
+
+        # Radar String Builder
+        # Format: COIN|PRICE|STATUS|COLOR_CODE
+        radar_lines = []
+        for coin, data in RADAR_CACHE.items():
+            radar_lines.append(f"{coin}|{data['price']}|{data['status']}|{data['color']}")
+        radar_str = "::".join(radar_lines)
         
         data = {
             "equity": f"{equity:.2f}",
             "cash": f"{cash:.2f}",
             "pnl": f"{pnl:+.2f}",
+            "proj": f"{proj_30d:+.2f}", # NEW: 30D Projection
             "status": status_msg,
             "events": events_str,
             "positions": pos_str,
+            "radar": radar_str,          # NEW: Radar Data
             "mode": mode,
             "updated": time.time()
         }
-        # Save to PERSISTENT VOLUME so dashboard can read it
+        
         with open(conf.get_path("dashboard_state.json"), "w") as f: 
             json.dump(data, f, ensure_ascii=False)
             
@@ -147,15 +154,13 @@ except Exception as e:
     sys.exit()
 
 def main_loop():
-    global STARTING_EQUITY
+    global STARTING_EQUITY, RADAR_CACHE
     
-    print("🦅 LUMA CLOUD NATIVE (FULL POWER) ONLINE")
+    print("🦅 LUMA CLOUD COMMANDER ONLINE")
     try:
-        # Load wallet from secure config
         address = conf.wallet_address
-        msg.send("info", "🦅 **LUMA CLOUD:** Deployment Successful. Systems Active.")
+        msg.send("info", "🦅 **LUMA CLOUD:** Deployment Successful. Command Center Active.")
         
-        # Set Leverage for entire expanded fleet
         for coin, rules in FLEET_CONFIG.items():
             try:
                 hands.set_leverage_all([coin], leverage=rules['lev'])
@@ -164,8 +169,6 @@ def main_loop():
 
         last_history_check = 0
         cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}
-        
-        # Timer for Rich Financial Reports
         last_finance_report = 0 
         
         while True:
@@ -205,18 +208,14 @@ def main_loop():
                 investable_pct = 0.70 
             
             total_investable_cash = equity * investable_pct
-            
             prince_margin_target = total_investable_cash * 0.25
             meme_margin_target = total_investable_cash * 0.1666
-            
             secured = ratchet.secured_coins
 
-            status_msg = f"Scanning... Mode:{risk_mode} Pool:${total_investable_cash:.1f} [{time.strftime('%H:%M:%S')}]"
+            status_msg = f"Scanning... Mode:{risk_mode} [{time.strftime('%H:%M:%S')}]"
             update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured)
             print(f">> [{time.strftime('%H:%M:%S')}] Pulse Check: OK", end='\r')
 
-            # --- DISCORD REPORTING ENGINE ---
-            # Send Rich Financial Report every 60 minutes (3600 seconds)
             if time.time() - last_finance_report > 3600:
                 try:
                     msg.notify_financial(equity, current_pnl, len(clean_positions), risk_mode)
@@ -226,34 +225,43 @@ def main_loop():
             for coin, rules in FLEET_CONFIG.items():
                 ratchet.check_trauma(hands, coin)
                 
+                # Check if already active (for Radar status)
                 existing = next((p for p in clean_positions if p['coin'] == coin), None)
-                if existing: continue
+                
+                try: candles = vision.get_candles(coin, "1h") 
+                except: candles = []
+                
+                # RADAR DATA COLLECTION
+                if candles:
+                    curr_p = float(candles[-1]['c'])
+                    if existing:
+                        RADAR_CACHE[coin] = {"price": f"${curr_p:.4f}", "status": "ACTIVE TRADE", "color": "blue"}
+                    else:
+                        # Simple logic to determine radar status
+                        # This updates the "Thoughts" of the bot for the dashboard
+                        if xeno.hunt(coin, candles) == "ATTACK":
+                             RADAR_CACHE[coin] = {"price": f"${curr_p:.4f}", "status": "ATTACK SIGNAL", "color": "orange"}
+                        else:
+                             RADAR_CACHE[coin] = {"price": f"${curr_p:.4f}", "status": "SCANNING", "color": "gray"}
+                else:
+                    continue
+
+                if existing: continue # Skip trading logic if exists
                 
                 pending = next((o for o in open_orders if o.get('coin') == coin), None)
                 if pending: continue 
 
-                try: candles = vision.get_candles(coin, "1h") 
-                except: candles = []
-                if not candles: continue
-                
-                current_price = float(candles[-1].get('close') or candles[-1].get('c') or 0)
-                if current_price == 0: continue
-
                 micro_season = season.get_multiplier(rules['type'])
                 macro_mult = session_data['aggression'] * history_data['multiplier']
                 total_mult = macro_mult * micro_season['mult']
-                
                 if total_mult < 1.0: total_mult = 1.0
                 if total_mult > 1.0: total_mult = 1.0 
                 
-                if rules['type'] == "PRINCE":
-                    target_margin_usd = prince_margin_target
-                else:
-                    target_margin_usd = meme_margin_target
+                if rules['type'] == "PRINCE": target_margin_usd = prince_margin_target
+                else: target_margin_usd = meme_margin_target
                 
                 leverage = rules['lev']
                 final_size = target_margin_usd * leverage
-                
                 if final_size < 60.0: final_size = 60.0
                 final_size = round(final_size, 2)
                 
@@ -278,10 +286,8 @@ def main_loop():
                             if oracle.consult(coin, "BREAKOUT_BUY", "Market", context_str):
                                 log = f"{coin}: MARKET BUY ({risk_mode})"
                                 update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, new_event=log)
-                                
-                                coin_size = final_size / current_price
+                                coin_size = final_size / float(candles[-1]['c'])
                                 hands.place_market_order(coin, "BUY", coin_size)
-                                
                                 msg.notify_trade(coin, "MARKET_BUY", "Market", final_size)
 
             ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
@@ -289,7 +295,6 @@ def main_loop():
                 for event in ratchet_events:
                      update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, new_event=event)
             
-            # 🚀 OVERCLOCK SPEED
             time.sleep(3) 
             
     except Exception as e:
