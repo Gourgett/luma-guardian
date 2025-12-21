@@ -12,14 +12,13 @@ warnings.simplefilter("ignore")
 ANCHOR_FILE = conf.get_path("equity_anchor.json")
 BTC_TICKER = "BTC"
 
-# 🚀 UPGRADE 2: EXPANDED FLEET
+# 🚀 EXPANDED FLEET CONFIGURATION
 FLEET_CONFIG = {
     "SOL":   {"type": "PRINCE", "lev": 10, "risk_mult": 1.0, "stop_loss": 0.03},
     "SUI":   {"type": "PRINCE", "lev": 10, "risk_mult": 1.0, "stop_loss": 0.03},
-    "ETH":   {"type": "PRINCE", "lev": 10, "risk_mult": 1.0, "stop_loss": 0.03}, # NEW
+    "ETH":   {"type": "PRINCE", "lev": 10, "risk_mult": 1.0, "stop_loss": 0.03}, # NEW: STABILITY ANCHOR
     "WIF":   {"type": "MEME",   "lev": 5,  "risk_mult": 1.0, "stop_loss": 0.05},
     "kPEPE": {"type": "MEME",   "lev": 5,  "risk_mult": 1.0, "stop_loss": 0.05},
-    "PEPE":  {"type": "MEME",   "lev": 5,  "risk_mult": 1.0, "stop_loss": 0.05}, # NEW
     "DOGE":  {"type": "MEME",   "lev": 5,  "risk_mult": 1.0, "stop_loss": 0.05}
 }
 
@@ -167,9 +166,6 @@ def main_loop():
         cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}
         
         while True:
-            # 🚀 UPGRADE 1: OVERCLOCK SPEED
-            # We removed the heartbeat file write to save IO operations
-            
             session_data = chronos.get_session()
             
             if time.time() - last_history_check > 14400: 
@@ -282,8 +278,8 @@ def main_loop():
                 for event in ratchet_events:
                      update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, new_event=event)
             
-            # 🚀 UPGRADE 3: HIGH SPEED LOOP
-            time.sleep(3) # Was 15s, now 3s for Cloud
+            # 🚀 OVERCLOCK SPEED
+            time.sleep(3) 
             
     except Exception as e:
         print(f"xx CRITICAL: {e}")
