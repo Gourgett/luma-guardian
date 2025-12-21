@@ -14,7 +14,7 @@ class Hands:
             self.info = Info(conf.base_url, skip_ws=True)
             self.exchange = Exchange(self.account, conf.base_url, self.account.address)
             
-            # LOAD PRECISION RULES (Crucial Fix)
+            # LOAD PRECISION RULES (Crucial for avoiding rejections)
             print(">> HANDS: Loading Exchange Precision Rules...")
             self.meta = self.info.meta()
             self.coin_decimals = {}
@@ -39,7 +39,7 @@ class Hands:
             except: pass
 
     def place_market_order(self, coin, side, size):
-        # THIS IS THE MISSING FUNCTION CAUSING THE CRASH
+        # --- THE MISSING FUNCTION IS RESTORED HERE ---
         try:
             # FIX: Round size correctly before sending
             final_size = self._round_size(coin, size)
@@ -58,11 +58,9 @@ class Hands:
             return False
 
     def place_trap(self, coin, side, price, size_usd):
-        # Only used for Limit Orders (Traps)
         try:
             is_buy = True if side == "BUY" else False
             price = float(price)
-            # Estimate size in coins
             size_coins = size_usd / price
             final_size = self._round_size(coin, size_coins)
             
