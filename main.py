@@ -8,7 +8,7 @@ from config import conf  # CLOUD CONFIG IMPORT
 
 warnings.simplefilter("ignore")
 
-# TIER: RAILWAY CLOUD EDITION (FULL POWER)
+# TIER: RAILWAY CLOUD EDITION (FULL POWER + RICH COMMS)
 ANCHOR_FILE = conf.get_path("equity_anchor.json")
 BTC_TICKER = "BTC"
 
@@ -16,7 +16,7 @@ BTC_TICKER = "BTC"
 FLEET_CONFIG = {
     "SOL":   {"type": "PRINCE", "lev": 10, "risk_mult": 1.0, "stop_loss": 0.03},
     "SUI":   {"type": "PRINCE", "lev": 10, "risk_mult": 1.0, "stop_loss": 0.03},
-    "ETH":   {"type": "PRINCE", "lev": 10, "risk_mult": 1.0, "stop_loss": 0.03}, # NEW: STABILITY ANCHOR
+    "ETH":   {"type": "PRINCE", "lev": 10, "risk_mult": 1.0, "stop_loss": 0.03}, 
     "WIF":   {"type": "MEME",   "lev": 5,  "risk_mult": 1.0, "stop_loss": 0.05},
     "kPEPE": {"type": "MEME",   "lev": 5,  "risk_mult": 1.0, "stop_loss": 0.05},
     "DOGE":  {"type": "MEME",   "lev": 5,  "risk_mult": 1.0, "stop_loss": 0.05}
@@ -165,6 +165,9 @@ def main_loop():
         last_history_check = 0
         cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}
         
+        # Timer for Rich Financial Reports
+        last_finance_report = 0 
+        
         while True:
             session_data = chronos.get_session()
             
@@ -211,6 +214,14 @@ def main_loop():
             status_msg = f"Scanning... Mode:{risk_mode} Pool:${total_investable_cash:.1f} [{time.strftime('%H:%M:%S')}]"
             update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured)
             print(f">> [{time.strftime('%H:%M:%S')}] Pulse Check: OK", end='\r')
+
+            # --- DISCORD REPORTING ENGINE ---
+            # Send Rich Financial Report every 60 minutes (3600 seconds)
+            if time.time() - last_finance_report > 3600:
+                try:
+                    msg.notify_financial(equity, current_pnl, len(clean_positions), risk_mode)
+                    last_finance_report = time.time()
+                except: pass
 
             for coin, rules in FLEET_CONFIG.items():
                 ratchet.check_trauma(hands, coin)
