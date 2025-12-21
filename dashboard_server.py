@@ -6,7 +6,7 @@ from config import conf
 
 app = Flask(__name__)
 
-# TIER: MISSION CONTROL (SINGLE PANE GRID)
+# TIER: MISSION CONTROL V2 (WITH RISK GAUGE)
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -23,15 +23,21 @@ HTML_TEMPLATE = """
         .card-header { background: #0d1117; padding: 8px 12px; border-bottom: 1px solid #30363d; font-size: 0.85em; font-weight: bold; color: #8b949e; letter-spacing: 1px; display: flex; justify-content: space-between; }
         
         /* SECTION A: VAULT (FINANCE) */
-        .vault-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: #30363d; }
-        .vault-box { background: #161b22; padding: 15px 10px; text-align: center; }
+        .vault-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; background: #30363d; }
+        .vault-box { background: #161b22; padding: 15px 10px; text-align: center; border-bottom: 1px solid #30363d; }
         .vault-label { display: block; font-size: 0.7em; color: #8b949e; margin-bottom: 5px; }
         .vault-value { font-size: 1.1em; font-weight: bold; }
         .green { color: #3fb950; }
         .red { color: #f85149; }
         .gold { color: #e3b341; }
         
-        /* SECTION B & C: TABLES */
+        /* RISK BAR */
+        .risk-container { background: #0d1117; padding: 10px; border-top: 1px solid #30363d; }
+        .risk-label { font-size: 0.7em; color: #8b949e; margin-bottom: 5px; display: block; }
+        .risk-bar-bg { background: #21262d; height: 6px; border-radius: 3px; overflow: hidden; }
+        .risk-bar-fill { height: 100%; background: #3fb950; width: 0%; transition: width 0.5s; }
+        
+        /* TABLES */
         .table-container { padding: 0; }
         table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
         th { text-align: left; padding: 8px 12px; color: #484f58; border-bottom: 1px solid #21262d; font-size: 0.8em; }
@@ -51,6 +57,8 @@ HTML_TEMPLATE = """
         @media (min-width: 768px) {
             .grid-container { grid-template-columns: 1fr 1fr; }
             .full-width { grid-column: span 2; }
+            .vault-grid { grid-template-columns: repeat(4, 1fr); } 
+            .vault-box { border-bottom: none; }
         }
     </style>
 </head>
@@ -68,12 +76,22 @@ HTML_TEMPLATE = """
                     <span class="vault-value" id="equity">---</span>
                 </div>
                 <div class="vault-box">
+                    <span class="vault-label">BUYING POWER</span>
+                    <span class="vault-value" id="cash" style="color: #fff;">---</span>
+                </div>
+                <div class="vault-box">
                     <span class="vault-label">SESSION PNL</span>
                     <span class="vault-value" id="pnl">---</span>
                 </div>
                 <div class="vault-box">
                     <span class="vault-label">30D PROJECTION</span>
                     <span class="vault-value" id="proj">---</span>
+                </div>
+            </div>
+            <div class="risk-container">
+                <span class="risk-label">MARGIN UTILIZATION: <span id="risk-pct">0%</span></span>
+                <div class="risk-bar-bg">
+                    <div class="risk-bar-fill" id="risk-bar"></div>
                 </div>
             </div>
         </div>
@@ -121,16 +139,34 @@ HTML_TEMPLATE = """
                 .then(data => {
                     // 1. UPDATE VAULT
                     document.getElementById('equity').innerText = '$' + data.equity;
+                    document.getElementById('cash').innerText = '$' + data.cash; // NEW
+                    
                     const pnl = parseFloat(data.pnl);
                     const pnlEl = document.getElementById('pnl');
                     pnlEl.innerText = (pnl >= 0 ? '+' : '') + '$' + data.pnl;
                     pnlEl.className = 'vault-value ' + (pnl >= 0 ? 'green' : 'red');
 
-                    // 2. UPDATE PROJECTION
                     const proj = parseFloat(data.proj || 0);
                     const projEl = document.getElementById('proj');
                     projEl.innerText = (proj >= 0 ? '+' : '') + '$' + parseFloat(data.proj).toFixed(2);
                     projEl.className = 'vault-value ' + (proj >= 0 ? 'green' : 'red');
+                    
+                    // RISK CALC
+                    const eqVal = parseFloat(data.equity);
+                    const cashVal = parseFloat(data.cash);
+                    let riskPct = 0;
+                    if(eqVal > 0) riskPct = ((eqVal - cashVal) / eqVal) * 100;
+                    if(riskPct < 0) riskPct = 0;
+                    if(riskPct > 100) riskPct = 100;
+                    
+                    document.getElementById('risk-pct').innerText = riskPct.toFixed(1) + '%';
+                    const bar = document.getElementById('risk-bar');
+                    bar.style.width = riskPct + '%';
+                    
+                    // Color code the risk bar
+                    if(riskPct < 50) bar.style.backgroundColor = '#3fb950'; // Green
+                    else if(riskPct < 80) bar.style.backgroundColor = '#e3b341'; // Yellow
+                    else bar.style.backgroundColor = '#f85149'; // Red
 
                     document.getElementById('mode').innerText = data.mode;
                     document.getElementById('timestamp').innerText = new Date(data.updated * 1000).toLocaleTimeString();
@@ -179,25 +215,7 @@ HTML_TEMPLATE = """
                 });
         }
         update();
-        setInterval(update, 2000); // Fast refresh for radar
+        setInterval(update, 2000);
     </script>
 </body>
 </html>
-"""
-
-@app.route('/')
-def dashboard():
-    return render_template_string(HTML_TEMPLATE)
-
-@app.route('/data')
-def get_data():
-    try:
-        file_path = conf.get_path("dashboard_state.json")
-        if os.path.exists(file_path):
-            with open(file_path, 'r') as f:
-                return jsonify(json.load(f))
-    except: pass
-    return jsonify({"equity": "---", "pnl": "0.00", "proj": "0.00", "mode": "BOOTING", "events": "", "positions": "NO_TRADES", "radar": "", "updated": time.time()})
-
-if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
