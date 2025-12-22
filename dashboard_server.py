@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, make_response
 import json
 import os
 import time
@@ -6,8 +6,8 @@ from config import conf
 
 app = Flask(__name__)
 
-# TIER: MISSION CONTROL V3 (STABLE)
-# "Raw Mode" HTML to prevent crashes
+# TIER: MISSION CONTROL V4 (WITH WATCHDOG)
+# Uses "Raw Mode" HTML to prevent syntax crashes
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -41,11 +41,11 @@ HTML_TEMPLATE = """
         td { padding: 8px 12px; border-bottom: 1px solid #21262d; }
         
         /* STATUS COLORS */
-        .status-active { color: #58a6ff; } /* Blue */
-        .status-scan { color: #8b949e; }   /* Gray */
-        .status-attack { color: #e3b341; font-weight: bold; } /* Orange */
-        .status-trap { color: #39c5cf; font-weight: bold; }   /* Cyan */
-        .status-warn { color: #d2a8ff; }   /* Purple */
+        .status-active { color: #58a6ff; }
+        .status-scan { color: #8b949e; }
+        .status-attack { color: #e3b341; font-weight: bold; }
+        .status-trap { color: #39c5cf; font-weight: bold; }
+        .status-warn { color: #d2a8ff; }
         
         .footer { text-align: center; font-size: 0.75em; color: #484f58; margin-top: 20px; }
 
@@ -162,10 +162,32 @@ def dashboard():
 @app.route('/data')
 def get_data():
     try:
-        if os.path.exists(conf.get_path("dashboard_state.json")):
-            with open(conf.get_path("dashboard_state.json"), 'r') as f: return jsonify(json.load(f))
+        path = conf.get_path("dashboard_state.json")
+        if os.path.exists(path):
+            with open(path, 'r') as f: return jsonify(json.load(f))
     except: pass
     return jsonify({"equity": "0.00", "cash": "0.00", "pnl": "0.00", "proj": "0.00", "mode": "BOOTING", "updated": time.time()})
+
+# --- THE WATCHDOG (HEALTHCHECK) ---
+@app.route('/health')
+def health_check():
+    try:
+        path = conf.get_path("dashboard_state.json")
+        if not os.path.exists(path):
+            # Still booting up, don't kill it yet.
+            return make_response("BOOTING", 200)
+            
+        with open(path, 'r') as f:
+            data = json.load(f)
+            last_update = float(data.get('updated', 0))
+            
+        # If Brain hasn't written to disk in 60s, it's frozen.
+        if time.time() - last_update > 60:
+            return make_response("BRAIN_DEAD", 500) # Triggers Restart
+            
+        return make_response("HEALTHY", 200)
+    except:
+        return make_response("ERROR", 500)
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
