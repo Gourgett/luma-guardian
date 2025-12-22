@@ -6,7 +6,7 @@ from config import conf
 
 app = Flask(__name__)
 
-# TIER: MISSION CONTROL V3 (DIAGNOSTICS & SESSION INFO)
+# TIER: MISSION CONTROL V3 (STABLE)
 # "Raw Mode" HTML to prevent crashes
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -113,10 +113,9 @@ HTML_TEMPLATE = """
                 projEl.className = 'vault-value ' + (d.proj >= 0 ? 'green' : 'red');
 
                 document.getElementById('mode').innerText = d.mode;
-                document.getElementById('session').innerText = d.session || "--"; // NEW
+                document.getElementById('session').innerText = d.session || "--";
                 document.getElementById('timestamp').innerText = new Date(d.updated * 1000).toLocaleTimeString();
 
-                // RISK
                 let risk = 0;
                 if(parseFloat(d.equity) > 0) risk = ((parseFloat(d.equity) - parseFloat(d.cash)) / parseFloat(d.equity)) * 100;
                 document.getElementById('risk-pct').innerText = risk.toFixed(1) + '%';
@@ -124,7 +123,6 @@ HTML_TEMPLATE = """
                 bar.style.width = Math.min(risk, 100) + '%';
                 bar.style.backgroundColor = risk < 50 ? '#3fb950' : (risk < 80 ? '#e3b341' : '#f85149');
 
-                // OPS
                 const ops = document.getElementById('ops-body');
                 if(d.positions && d.positions !== "NO_TRADES") {
                     ops.innerHTML = d.positions.split('::').map(r => {
@@ -134,7 +132,6 @@ HTML_TEMPLATE = """
                     }).join('');
                 } else ops.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:20px;color:#484f58">NO TRADES</td></tr>';
 
-                // RADAR (Enhanced Colors)
                 const rad = document.getElementById('radar-body');
                 if(d.radar) {
                     rad.innerHTML = d.radar.split('::').map(r => {
@@ -142,8 +139,8 @@ HTML_TEMPLATE = """
                         let cls = 'status-scan';
                         if(col === 'blue') cls = 'status-active';
                         if(col === 'orange') cls = 'status-attack';
-                        if(col === 'cyan') cls = 'status-trap';  // NEW
-                        if(col === 'purple') cls = 'status-warn'; // NEW
+                        if(col === 'cyan') cls = 'status-trap';
+                        if(col === 'purple') cls = 'status-warn';
                         return `<tr><td><b>${c}</b></td><td>${p}</td><td class="${cls}">${st}</td></tr>`;
                     }).join('');
                 }
@@ -156,3 +153,19 @@ HTML_TEMPLATE = """
     </script>
 </body>
 </html>
+"""
+
+@app.route('/')
+def dashboard():
+    return HTML_TEMPLATE 
+
+@app.route('/data')
+def get_data():
+    try:
+        if os.path.exists(conf.get_path("dashboard_state.json")):
+            with open(conf.get_path("dashboard_state.json"), 'r') as f: return jsonify(json.load(f))
+    except: pass
+    return jsonify({"equity": "0.00", "cash": "0.00", "pnl": "0.00", "proj": "0.00", "mode": "BOOTING", "updated": time.time()})
+
+if __name__ == "__main__":
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
