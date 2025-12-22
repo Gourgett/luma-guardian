@@ -8,7 +8,7 @@ from config import conf
 
 warnings.simplefilter("ignore")
 
-# TIER: RAILWAY CLOUD COMMANDER (DIAGNOSTICS UPGRADE)
+# TIER: RAILWAY CLOUD COMMANDER (STABILIZED)
 ANCHOR_FILE = conf.get_path("equity_anchor.json")
 BTC_TICKER = "BTC"
 SESSION_START_TIME = time.time()
@@ -111,7 +111,7 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", ses
             "positions": pos_str,
             "radar": radar_str,
             "mode": mode,
-            "session": session_name, # NEW: Session Info
+            "session": session_name,
             "updated": time.time()
         }
         
@@ -157,7 +157,7 @@ def main_loop():
     print("🦅 LUMA CLOUD COMMANDER ONLINE")
     try:
         address = conf.wallet_address
-        msg.send("info", "🦅 **LUMA CLOUD:** Deployment Successful. Diagnostics Active.")
+        msg.send("info", "🦅 **LUMA CLOUD:** System Stabilized.")
         
         for coin, rules in FLEET_CONFIG.items():
             try:
@@ -230,7 +230,7 @@ def main_loop():
                 try: candles = vision.get_candles(coin, "1h") 
                 except: candles = []
                 
-                # --- DIAGNOSTICS & RADAR ---
+                # --- STABILIZED RADAR (SAFE MODE) ---
                 if candles:
                     curr_p = float(candles[-1]['c'])
                     formatted_p = f"${curr_p:.4f}"
@@ -238,38 +238,11 @@ def main_loop():
                     if existing:
                         RADAR_CACHE[coin] = {"price": formatted_p, "status": "ACTIVE TRADE", "color": "blue"}
                     elif pending:
-                        # NEW: Show Trap Price
                         limit_px = pending.get('limitPx', '---')
                         RADAR_CACHE[coin] = {"price": formatted_p, "status": f"🛡️ TRAP @ {limit_px}", "color": "cyan"}
                     else:
-                        # NEW: Advanced Status Logic
-                        status_txt = "👀 SCANNING"
-                        status_col = "gray"
-                        
-                        # Analyze for status even if not trading
-                        pred_sig = predator.analyze_divergence(candles)
-                        xeno_sig = xeno.hunt(coin, candles)
-                        whale_sig = whale.hunt_ghosts(candles)
-                        
-                        # Calculate volatility (simplistic check)
-                        high = float(candles[-1]['h'])
-                        low = float(candles[-1]['l'])
-                        volatility = (high - low) / low * 100
-                        
-                        if xeno_sig == "ATTACK":
-                             status_txt = "⚔️ ATTACK SIGNAL"
-                             status_col = "orange"
-                        elif pred_sig == "REGULAR_BEAR" or pred_sig == "REAL_DUMP":
-                             status_txt = "⚠️ OVERBOUGHT (RSI)"
-                             status_col = "purple"
-                        elif whale_sig:
-                             status_txt = "🐋 WHALE ACTIVITY"
-                             status_col = "gold"
-                        elif volatility < 0.2: # Very low volatility
-                             status_txt = "😴 SLEEPING (WEAK)"
-                             status_col = "gray"
-                        
-                        RADAR_CACHE[coin] = {"price": formatted_p, "status": status_txt, "color": status_col}
+                        # Reverted to simple status to prevent crashes
+                        RADAR_CACHE[coin] = {"price": formatted_p, "status": "👀 SCANNING", "color": "gray"}
                 else:
                     continue
                 # ---------------------------
