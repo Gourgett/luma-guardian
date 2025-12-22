@@ -6,8 +6,8 @@ from config import conf
 
 app = Flask(__name__)
 
-# TIER: MISSION CONTROL V2 (RAW MODE)
-# Using raw HTML serving to prevent syntax errors
+# TIER: MISSION CONTROL V3 (DIAGNOSTICS & SESSION INFO)
+# "Raw Mode" HTML to prevent crashes
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -39,9 +39,14 @@ HTML_TEMPLATE = """
         table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
         th { text-align: left; padding: 8px 12px; color: #484f58; border-bottom: 1px solid #21262d; font-size: 0.8em; }
         td { padding: 8px 12px; border-bottom: 1px solid #21262d; }
-        .radar-active { color: #58a6ff; }
-        .radar-scan { color: #8b949e; }
-        .radar-attack { color: #e3b341; font-weight: bold; }
+        
+        /* STATUS COLORS */
+        .status-active { color: #58a6ff; } /* Blue */
+        .status-scan { color: #8b949e; }   /* Gray */
+        .status-attack { color: #e3b341; font-weight: bold; } /* Orange */
+        .status-trap { color: #39c5cf; font-weight: bold; }   /* Cyan */
+        .status-warn { color: #d2a8ff; }   /* Purple */
+        
         .footer { text-align: center; font-size: 0.75em; color: #484f58; margin-top: 20px; }
 
         @media (min-width: 768px) {
@@ -54,7 +59,10 @@ HTML_TEMPLATE = """
 <body>
     <div class="grid-container">
         <div class="card full-width">
-            <div class="card-header"><span>LUMA SYSTEM</span><span id="mode" style="color:#e3b341">---</span></div>
+            <div class="card-header">
+                <span>LUMA SYSTEM</span>
+                <span style="color:#e3b341"><span id="mode">---</span> | <span id="session" style="color:#58a6ff">---</span></span>
+            </div>
             <div class="vault-grid">
                 <div class="vault-box"><span class="vault-label">EQUITY</span><span class="vault-value" id="equity">---</span></div>
                 <div class="vault-box"><span class="vault-label">BUYING POWER</span><span class="vault-value" id="cash">---</span></div>
@@ -76,7 +84,7 @@ HTML_TEMPLATE = """
         </div>
 
         <div class="card">
-            <div class="card-header">RADAR</div>
+            <div class="card-header">FLEET RADAR</div>
             <table>
                 <thead><tr><th>ASSET</th><th>PRICE</th><th>STATUS</th></tr></thead>
                 <tbody id="radar-body"><tr><td colspan="3" style="text-align:center;padding:20px;color:#484f58">SCANNING...</td></tr></tbody>
@@ -105,6 +113,7 @@ HTML_TEMPLATE = """
                 projEl.className = 'vault-value ' + (d.proj >= 0 ? 'green' : 'red');
 
                 document.getElementById('mode').innerText = d.mode;
+                document.getElementById('session').innerText = d.session || "--"; // NEW
                 document.getElementById('timestamp').innerText = new Date(d.updated * 1000).toLocaleTimeString();
 
                 // RISK
@@ -125,14 +134,16 @@ HTML_TEMPLATE = """
                     }).join('');
                 } else ops.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:20px;color:#484f58">NO TRADES</td></tr>';
 
-                // RADAR
+                // RADAR (Enhanced Colors)
                 const rad = document.getElementById('radar-body');
                 if(d.radar) {
                     rad.innerHTML = d.radar.split('::').map(r => {
                         const [c, p, st, col] = r.split('|');
-                        let cls = 'radar-scan';
-                        if(col === 'blue') cls = 'radar-active';
-                        if(col === 'orange') cls = 'radar-attack';
+                        let cls = 'status-scan';
+                        if(col === 'blue') cls = 'status-active';
+                        if(col === 'orange') cls = 'status-attack';
+                        if(col === 'cyan') cls = 'status-trap';  // NEW
+                        if(col === 'purple') cls = 'status-warn'; // NEW
                         return `<tr><td><b>${c}</b></td><td>${p}</td><td class="${cls}">${st}</td></tr>`;
                     }).join('');
                 }
@@ -145,19 +156,3 @@ HTML_TEMPLATE = """
     </script>
 </body>
 </html>
-"""
-
-@app.route('/')
-def dashboard():
-    return HTML_TEMPLATE # Serving raw string directly
-
-@app.route('/data')
-def get_data():
-    try:
-        if os.path.exists(conf.get_path("dashboard_state.json")):
-            with open(conf.get_path("dashboard_state.json"), 'r') as f: return jsonify(json.load(f))
-    except: pass
-    return jsonify({"equity": "0.00", "cash": "0.00", "pnl": "0.00", "proj": "0.00", "mode": "BOOTING", "updated": time.time()})
-
-if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
