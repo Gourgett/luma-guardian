@@ -40,8 +40,8 @@ class Hands:
     def _get_precise_size(self, coin, size):
         try:
             decimals = self.manual_overrides.get(coin, 2)
-            if not self.coin_rules: decimals = 2
-            elif coin not in self.manual_overrides: decimals = self.coin_rules.get(coin, 2)
+            if hasattr(self, 'coin_rules') and self.coin_rules:
+                decimals = self.coin_rules.get(coin, decimals)
             
             if decimals == 0: return int(size)
             factor = 10 ** decimals
