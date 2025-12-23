@@ -1,193 +1,313 @@
-from flask import Flask, jsonify, make_response
-import json
-import os
 import time
+import json
+import sys
+import os
+import warnings
+from collections import deque
 from config import conf
 
-app = Flask(__name__)
+warnings.simplefilter("ignore")
 
-# TIER: MISSION CONTROL V4 (WITH WATCHDOG)
-# Uses "Raw Mode" HTML to prevent syntax crashes
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>LUMA :: COMMAND</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="refresh" content="5">
-    <style>
-        body { background-color: #0b0e11; color: #c9d1d9; font-family: monospace; margin: 0; padding: 10px; }
-        .grid-container { display: grid; gap: 15px; grid-template-columns: 1fr; }
-        .card { background: #161b22; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
-        .card-header { background: #0d1117; padding: 8px 12px; border-bottom: 1px solid #30363d; font-weight: bold; color: #8b949e; display: flex; justify-content: space-between; }
-        
-        /* VAULT GRID */
-        .vault-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; background: #30363d; }
-        .vault-box { background: #161b22; padding: 15px 10px; text-align: center; }
-        .vault-label { display: block; font-size: 0.7em; color: #8b949e; margin-bottom: 5px; }
-        .vault-value { font-size: 1.1em; font-weight: bold; }
-        .green { color: #3fb950; }
-        .red { color: #f85149; }
-        
-        /* RISK METER */
-        .risk-container { background: #0d1117; padding: 10px; border-top: 1px solid #30363d; }
-        .risk-label { font-size: 0.7em; color: #8b949e; margin-bottom: 5px; display: block; }
-        .risk-bar-bg { background: #21262d; height: 6px; border-radius: 3px; overflow: hidden; }
-        .risk-bar-fill { height: 100%; background: #3fb950; width: 0%; transition: width 0.5s; }
-        
-        /* TABLES */
-        table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
-        th { text-align: left; padding: 8px 12px; color: #484f58; border-bottom: 1px solid #21262d; font-size: 0.8em; }
-        td { padding: 8px 12px; border-bottom: 1px solid #21262d; }
-        
-        /* STATUS COLORS */
-        .status-active { color: #58a6ff; }
-        .status-scan { color: #8b949e; }
-        .status-attack { color: #e3b341; font-weight: bold; }
-        .status-trap { color: #39c5cf; font-weight: bold; }
-        .status-warn { color: #d2a8ff; }
-        
-        .footer { text-align: center; font-size: 0.75em; color: #484f58; margin-top: 20px; }
+# TIER: RAILWAY CLOUD COMMANDER (VISUAL PATCH)
+ANCHOR_FILE = conf.get_path("equity_anchor.json")
+BTC_TICKER = "BTC"
+SESSION_START_TIME = time.time()
 
-        @media (min-width: 768px) {
-            .grid-container { grid-template-columns: 1fr 1fr; }
-            .full-width { grid-column: span 2; }
-            .vault-grid { grid-template-columns: repeat(4, 1fr); } 
-        }
-    </style>
-</head>
-<body>
-    <div class="grid-container">
-        <div class="card full-width">
-            <div class="card-header">
-                <span>LUMA SYSTEM</span>
-                <span style="color:#e3b341"><span id="mode">---</span> | <span id="session" style="color:#58a6ff">---</span></span>
-            </div>
-            <div class="vault-grid">
-                <div class="vault-box"><span class="vault-label">EQUITY</span><span class="vault-value" id="equity">---</span></div>
-                <div class="vault-box"><span class="vault-label">BUYING POWER</span><span class="vault-value" id="cash">---</span></div>
-                <div class="vault-box"><span class="vault-label">SESSION PNL</span><span class="vault-value" id="pnl">---</span></div>
-                <div class="vault-box"><span class="vault-label">30D PROJECTION</span><span class="vault-value" id="proj">---</span></div>
-            </div>
-            <div class="risk-container">
-                <span class="risk-label">RISK LEVEL: <span id="risk-pct">0%</span></span>
-                <div class="risk-bar-bg"><div class="risk-bar-fill" id="risk-bar"></div></div>
-            </div>
-        </div>
+FLEET_CONFIG = {
+    "SOL":   {"type": "PRINCE", "lev": 10, "risk_mult": 1.0, "stop_loss": 0.03},
+    "SUI":   {"type": "PRINCE", "lev": 10, "risk_mult": 1.0, "stop_loss": 0.03},
+    "ETH":   {"type": "PRINCE", "lev": 10, "risk_mult": 1.0, "stop_loss": 0.03},
+    "WIF":   {"type": "MEME",   "lev": 5,  "risk_mult": 1.0, "stop_loss": 0.05},
+    "kPEPE": {"type": "MEME",   "lev": 5,  "risk_mult": 1.0, "stop_loss": 0.05},
+    "DOGE":  {"type": "MEME",   "lev": 5,  "risk_mult": 1.0, "stop_loss": 0.05}
+}
 
-        <div class="card">
-            <div class="card-header">ACTIVE OPS</div>
-            <table>
-                <thead><tr><th>ASSET</th><th>SIDE</th><th>PNL</th></tr></thead>
-                <tbody id="ops-body"><tr><td colspan="3" style="text-align:center;padding:20px;color:#484f58">NO TRADES</td></tr></tbody>
-            </table>
-        </div>
+STARTING_EQUITY = 0.0
+EVENT_QUEUE = deque(maxlen=4)
+RADAR_CACHE = {} 
 
-        <div class="card">
-            <div class="card-header">FLEET RADAR</div>
-            <table>
-                <thead><tr><th>ASSET</th><th>PRICE</th><th>STATUS</th></tr></thead>
-                <tbody id="radar-body"><tr><td colspan="3" style="text-align:center;padding:20px;color:#484f58">SCANNING...</td></tr></tbody>
-            </table>
-        </div>
+def load_anchor(current_equity):
+    try:
+        if os.path.exists(ANCHOR_FILE):
+            with open(ANCHOR_FILE, 'r') as f:
+                data = json.load(f)
+                return float(data.get("start_equity", current_equity))
+        else:
+            with open(ANCHOR_FILE, 'w') as f:
+                json.dump({"start_equity": current_equity}, f)
+            return current_equity
+    except: return current_equity
+
+def normalize_positions(raw_positions):
+    clean_pos = []
+    if not raw_positions: return []
+    for item in raw_positions:
+        try:
+            p = item['position'] if 'position' in item else item
+            coin = p.get('coin') or p.get('symbol') or p.get('asset') or "UNKNOWN"
+            if coin == "UNKNOWN": continue
+            size = float(p.get('szi') or p.get('size') or p.get('position') or 0)
+            entry = float(p.get('entryPx') or p.get('entry_price') or 0)
+            pnl = float(p.get('unrealizedPnl') or p.get('unrealized_pnl') or 0)
+            if size == 0: continue
+            clean_pos.append({"coin": coin, "size": size, "entry": entry, "pnl": pnl})
+        except: continue
+    return clean_pos
+
+def calculate_projection(current_pnl):
+    elapsed_hours = (time.time() - SESSION_START_TIME) / 3600
+    if elapsed_hours < 0.1: return 0.0 
+    hourly_rate = current_pnl / elapsed_hours
+    return hourly_rate * 24 * 30
+
+def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", session_name="--", secured_list=[], new_event=None):
+    global STARTING_EQUITY, EVENT_QUEUE, RADAR_CACHE
+    try:
+        if STARTING_EQUITY == 0.0 and equity > 0: 
+            STARTING_EQUITY = load_anchor(equity)
+            
+        pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
+        proj_30d = calculate_projection(pnl)
         
-        <div class="card full-width">
-            <div class="card-header">LOGS</div>
-            <div id="logs" style="padding:10px;font-size:0.8em;color:#8b949e;font-family:monospace">waiting...</div>
-        </div>
-    </div>
-    <div class="footer">LUMA CLOUD NATIVE • <span id="timestamp">--:--:--</span></div>
+        if new_event:
+            t = time.strftime("%H:%M:%S")
+            EVENT_QUEUE.append(f"[{t}] {new_event}")
+        events_str = "||".join(list(EVENT_QUEUE))
 
-    <script>
-        function update() {
-            fetch('/data').then(r => r.json()).then(d => {
-                document.getElementById('equity').innerText = '$' + d.equity;
-                document.getElementById('cash').innerText = '$' + d.cash;
+        pos_str = "NO_TRADES"
+        if positions:
+            pos_lines = []
+            for p in positions:
+                coin = p['coin']
+                size = p['size']
+                entry = p['entry']
+                pnl_val = p['pnl']
+                side = "LONG" if size > 0 else "SHORT"
                 
-                const pnlEl = document.getElementById('pnl');
-                pnlEl.innerText = (d.pnl >= 0 ? '+' : '') + '$' + d.pnl;
-                pnlEl.className = 'vault-value ' + (d.pnl >= 0 ? 'green' : 'red');
+                # Logic: Calculate ROE
+                lev = FLEET_CONFIG.get(coin, {}).get('lev', 10)
+                margin = (abs(size) * entry) / lev
+                roe = 0.0
+                if margin > 0: roe = (pnl_val / margin) * 100
+                
+                is_secured = coin in secured_list
+                icon = "🔒" if is_secured else "" 
+                
+                # --- VISUAL FIX: Combine $ and % ---
+                # This forces both to show in the PNL column
+                display_pnl = f"${pnl_val:.2f} ({roe:.1f}%)"
+                
+                pos_lines.append(f"{coin}|{side}|{display_pnl}|{roe:.1f}|{icon}")
+            pos_str = "::".join(pos_lines)
 
-                const projEl = document.getElementById('proj');
-                projEl.innerText = (d.proj >= 0 ? '+' : '') + '$' + d.proj;
-                projEl.className = 'vault-value ' + (d.proj >= 0 ? 'green' : 'red');
-
-                document.getElementById('mode').innerText = d.mode;
-                document.getElementById('session').innerText = d.session || "--";
-                document.getElementById('timestamp').innerText = new Date(d.updated * 1000).toLocaleTimeString();
-
-                let risk = 0;
-                if(parseFloat(d.equity) > 0) risk = ((parseFloat(d.equity) - parseFloat(d.cash)) / parseFloat(d.equity)) * 100;
-                document.getElementById('risk-pct').innerText = risk.toFixed(1) + '%';
-                const bar = document.getElementById('risk-bar');
-                bar.style.width = Math.min(risk, 100) + '%';
-                bar.style.backgroundColor = risk < 50 ? '#3fb950' : (risk < 80 ? '#e3b341' : '#f85149');
-
-                const ops = document.getElementById('ops-body');
-                if(d.positions && d.positions !== "NO_TRADES") {
-                    ops.innerHTML = d.positions.split('::').map(r => {
-                        const [c, s, p, roe, i] = r.split('|');
-                        const col = parseFloat(p) >= 0 ? '#3fb950' : '#f85149';
-                        return `<tr><td>${i} <b>${c}</b></td><td style="color:${s==='LONG'?'#58a6ff':'#f85149'}">${s}</td><td style="color:${col}">$${p}</td></tr>`;
-                    }).join('');
-                } else ops.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:20px;color:#484f58">NO TRADES</td></tr>';
-
-                const rad = document.getElementById('radar-body');
-                if(d.radar) {
-                    rad.innerHTML = d.radar.split('::').map(r => {
-                        const [c, p, st, col] = r.split('|');
-                        let cls = 'status-scan';
-                        if(col === 'blue') cls = 'status-active';
-                        if(col === 'orange') cls = 'status-attack';
-                        if(col === 'cyan') cls = 'status-trap';
-                        if(col === 'purple') cls = 'status-warn';
-                        return `<tr><td><b>${c}</b></td><td>${p}</td><td class="${cls}">${st}</td></tr>`;
-                    }).join('');
-                }
-
-                if(d.events) document.getElementById('logs').innerHTML = d.events.split('||').reverse().join('<br>');
-            });
+        radar_lines = []
+        for coin, data in RADAR_CACHE.items():
+            radar_lines.append(f"{coin}|{data['price']}|{data['status']}|{data['color']}")
+        radar_str = "::".join(radar_lines)
+        
+        data = {
+            "equity": f"{equity:.2f}",
+            "cash": f"{cash:.2f}",
+            "pnl": f"{pnl:+.2f}",
+            "proj": f"{proj_30d:+.2f}",
+            "status": status_msg,
+            "events": events_str,
+            "positions": pos_str,
+            "radar": radar_str,
+            "mode": mode,
+            "session": session_name,
+            "updated": time.time()
         }
-        setInterval(update, 2000);
-        update();
-    </script>
-</body>
-</html>
-"""
+        with open(conf.get_path("dashboard_state.json"), "w") as f: 
+            json.dump(data, f, ensure_ascii=False)
+    except Exception as e: pass
 
-@app.route('/')
-def dashboard():
-    return HTML_TEMPLATE 
+try:
+    print(">> [1/10] Loading Modules...")
+    from vision import Vision
+    from hands import Hands
+    from xenomorph import Xenomorph
+    from smart_money import SmartMoney
+    from deep_sea import DeepSea
+    from messenger import Messenger
+    from chronos import Chronos
+    from historian import Historian
+    from oracle import Oracle
+    from seasonality import Seasonality
+    from predator import Predator
+    
+    print(">> [2/10] Initializing Organs...")
+    vision = Vision()
+    hands = Hands()
+    xeno = Xenomorph()
+    whale = SmartMoney()
+    ratchet = DeepSea()
+    msg = Messenger()
+    chronos = Chronos()
+    history = Historian()
+    oracle = Oracle()
+    season = Seasonality()
+    predator = Predator()
+    print(">> SYSTEM INTEGRITY: 100%")
+except Exception as e:
+    print(f"xx CRITICAL LOAD ERROR: {e}")
+    sys.exit()
 
-@app.route('/data')
-def get_data():
+def main_loop():
+    global STARTING_EQUITY, RADAR_CACHE
+    print("🦅 LUMA CLOUD COMMANDER ONLINE")
+    
     try:
-        path = conf.get_path("dashboard_state.json")
-        if os.path.exists(path):
-            with open(path, 'r') as f: return jsonify(json.load(f))
-    except: pass
-    return jsonify({"equity": "0.00", "cash": "0.00", "pnl": "0.00", "proj": "0.00", "mode": "BOOTING", "updated": time.time()})
+        address = conf.wallet_address
+        msg.send("info", "🦅 **LUMA CLOUD:** Visuals Updated.")
+        
+        for coin, rules in FLEET_CONFIG.items():
+            try: hands.set_leverage_all([coin], leverage=rules['lev'])
+            except: pass
+            time.sleep(0.2) 
 
-# --- THE WATCHDOG (HEALTHCHECK) ---
-@app.route('/health')
-def health_check():
-    try:
-        path = conf.get_path("dashboard_state.json")
-        if not os.path.exists(path):
-            # Still booting up, don't kill it yet.
-            return make_response("BOOTING", 200)
+        last_history_check = 0
+        cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}
+        last_finance_report = 0 
+        
+        while True:
+            session_data = chronos.get_session()
+            session_name = session_data['name']
             
-        with open(path, 'r') as f:
-            data = json.load(f)
-            last_update = float(data.get('updated', 0))
+            # HISTORY
+            if time.time() - last_history_check > 14400: 
+                try:
+                    btc_daily = vision.get_candles(BTC_TICKER, "1d")
+                    if btc_daily:
+                        cached_history_data = history.check_regime(btc_daily)
+                        last_history_check = time.time()
+                except: pass
+            history_data = cached_history_data
             
-        # If Brain hasn't written to disk in 60s, it's frozen.
-        if time.time() - last_update > 60:
-            return make_response("BRAIN_DEAD", 500) # Triggers Restart
+            # FETCH USER STATE
+            equity = 0.0
+            cash = 0.0
+            clean_positions = []
+            open_orders = [] 
+            data_fetched = False
             
-        return make_response("HEALTHY", 200)
-    except:
-        return make_response("ERROR", 500)
+            try:
+                user_state = vision.get_user_state(address)
+                if user_state:
+                    equity = float(user_state.get('marginSummary', {}).get('accountValue', 0))
+                    cash = float(user_state.get('withdrawable', 0))
+                    clean_positions = normalize_positions(user_state.get('assetPositions', []))
+                    open_orders = user_state.get('openOrders', [])
+                    data_fetched = True 
+            except Exception as e: pass
+            
+            if STARTING_EQUITY == 0.0 and equity > 0:
+                STARTING_EQUITY = load_anchor(equity)
+            current_pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
+            
+            risk_mode = "AGGRESSIVE"
+            investable_pct = 0.60 
+            if current_pnl > 5.00:
+                risk_mode = "GOD_MODE"
+                investable_pct = 0.70 
+            
+            total_investable_cash = equity * investable_pct
+            prince_margin_target = total_investable_cash * 0.25
+            meme_margin_target = total_investable_cash * 0.1666
+            
+            # Secured Coins
+            secured = ratchet.secured_coins
+
+            # Dashboard Update
+            status_msg = f"Scanning... Mode:{risk_mode}"
+            update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured)
+            print(f">> [{time.strftime('%H:%M:%S')}] Pulse Check: OK", end='\r')
+
+            # Financial Report
+            if time.time() - last_finance_report > 3600:
+                try:
+                    msg.notify_financial(equity, current_pnl, len(clean_positions), risk_mode)
+                    last_finance_report = time.time()
+                except: pass
+
+            # TRADING LOOP
+            for coin, rules in FLEET_CONFIG.items():
+                
+                existing = next((p for p in clean_positions if p['coin'] == coin), None)
+                pending = next((o for o in open_orders if o.get('coin') == coin), None)
+                
+                try: candles = vision.get_candles(coin, "1h") 
+                except: candles = []
+                
+                if candles:
+                    curr_p = float(candles[-1]['c'])
+                    formatted_p = f"${curr_p:.4f}"
+                    if existing:
+                        RADAR_CACHE[coin] = {"price": formatted_p, "status": "ACTIVE TRADE", "color": "blue"}
+                    elif pending:
+                        limit_px = pending.get('limitPx', '---')
+                        RADAR_CACHE[coin] = {"price": formatted_p, "status": f"🛡️ TRAP @ {limit_px}", "color": "cyan"}
+                    else:
+                        RADAR_CACHE[coin] = {"price": formatted_p, "status": "👀 SCANNING", "color": "gray"}
+                else:
+                    continue
+
+                if existing or pending: continue 
+
+                micro_season = season.get_multiplier(rules['type'])
+                macro_mult = session_data['aggression'] * history_data['multiplier']
+                total_mult = macro_mult * micro_season['mult']
+                if total_mult < 1.0: total_mult = 1.0
+                if total_mult > 1.0: total_mult = 1.0 
+                
+                if rules['type'] == "PRINCE": target_margin_usd = prince_margin_target
+                else: target_margin_usd = meme_margin_target
+                
+                leverage = rules['lev']
+                final_size = target_margin_usd * leverage
+                if final_size < 60.0: final_size = 60.0
+                final_size = round(final_size, 2)
+                
+                context_str = f"Session: {session_data['name']}, Season: {micro_season['note']}"
+                predator_signal = predator.analyze_divergence(candles)
+                sm_signal = whale.hunt_turtle(candles) or whale.hunt_ghosts(candles)
+                
+                if sm_signal:
+                    if predator_signal != "EXHAUSTION_SELL" or sm_signal['side'] == "SELL":
+                         if oracle.consult(coin, sm_signal['type'], sm_signal['price'], context_str):
+                            side = sm_signal['side']
+                            if hands.place_trap(coin, side, sm_signal['price'], final_size):
+                                log = f"{coin}: {sm_signal['type']} ({risk_mode})"
+                                update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=log)
+                                msg.notify_trade(coin, f"TRAP_{side}", sm_signal['price'], final_size)
+                
+                elif xeno.hunt(coin, candles) == "ATTACK":
+                    if predator_signal == "REAL_PUMP" or predator_signal is None:
+                        if rules['type'] == "MEME" and session_data['name'] == "ASIA": pass 
+                        else:
+                            if oracle.consult(coin, "BREAKOUT_BUY", "Market", context_str):
+                                coin_size = final_size / float(candles[-1]['c'])
+                                result = hands.place_market_order(coin, "BUY", coin_size)
+                                if result is True:
+                                    log = f"{coin}: MARKET BUY ({risk_mode})"
+                                    update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=log)
+                                    msg.notify_trade(coin, "MARKET_BUY", "Market", final_size)
+                                else:
+                                    update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=f"❌ {coin}: {str(result)}")
+
+            # MEMORY PROTECTION LOGIC
+            if data_fetched:
+                ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
+                if ratchet_events:
+                    for event in ratchet_events:
+                         update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=event)
+            
+            time.sleep(3) 
+            
+    except Exception as e:
+        print(f"xx CRITICAL: {e}")
+        msg.send("errors", f"CRASH: {e}")
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
+    try: main_loop()
+    except: print("\n🦅 LUMA OFFLINE")
