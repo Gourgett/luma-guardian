@@ -14,57 +14,45 @@ class Hands:
             self.info = Info(conf.base_url, skip_ws=True)
             self.exchange = Exchange(self.account, conf.base_url, self.account.address)
 
-            # 1. LOAD RULES FROM EXCHANGE
+            # 1. LOAD RULES
             self.meta = self.info.meta()
             self.coin_rules = {}
             for asset in self.meta['universe']:
                 self.coin_rules[asset['name']] = asset['szDecimals']
             
-            # 2. SAFETY OVERRIDES (The "Anti-Reject" Layer)
-            # We explicitly force these coins to Integer-Only (0 decimals)
-            # This prevents the "Default to 2" bug that kills kPEPE orders.
+            # 2. SAFETY OVERRIDES (Force Integer for Meme Coins)
             self.manual_overrides = {
                 'kPEPE': 0,
                 'WIF': 0,
                 'PEPE': 0,
-                'BONK': 0,
-                'SHIB': 0
+                'BONK': 0
             }
             
-            print(f">> HANDS ARMED: Loaded {len(self.coin_rules)} Assets (With Safety Overrides)")
+            print(f">> HANDS ARMED: Loaded {len(self.coin_rules)} Assets")
         except Exception as e:
             print(f"xx HANDS INIT FAIL: {e}")
-            # Fallback to empty if init fails, logic below handles it
             self.coin_rules = {}
             self.manual_overrides = {'kPEPE': 0, 'WIF': 0}
 
     def _get_precise_size(self, coin, size):
-        """
-        Determines the exact allowed size format.
-        Priority: 
-        1. Manual Override (Safety)
-        2. Exchange Rule (Meta)
-        3. Default (2 decimals)
-        """
         try:
             # CHECK OVERRIDE FIRST
             if coin in self.manual_overrides:
                 decimals = self.manual_overrides[coin]
             else:
-                decimals = self.coin_rules.get(coin, 2) # Default to 2 if unknown
+                decimals = self.coin_rules.get(coin, 2) 
             
-            # THE INTEGER FORCE (For kPEPE/WIF)
+            # FORCE INTEGER (The Anti-Reject Fix)
             if decimals == 0:
-                return int(size) 
+                return int(size)
             
-            # THE TRUNCATOR (For SOL/ETH)
+            # TRUNCATE DECIMALS (The Precision Fix)
             factor = 10 ** decimals
             truncated = math.floor(size * factor) / factor
             return truncated
             
-        except Exception as e:
-            print(f"xx FORMAT ERROR {coin}: {e}")
-            return int(size) # Panic fallback to integer
+        except:
+            return int(size) # Safe fallback
 
     def set_leverage_all(self, coins, leverage):
         for coin in coins:
@@ -73,42 +61,35 @@ class Hands:
 
     def place_market_order(self, coin, side, size):
         try:
-            # STEP 1: Format Size
+            # 1. FORMAT SIZE
             final_size = self._get_precise_size(coin, size)
             is_buy = True if side == "BUY" else False
 
-            if final_size <= 0: 
-                print(f"xx SIZE ZERO {coin}")
-                return False
+            if final_size <= 0: return "ZERO_SIZE"
 
             print(f">> EXEC {coin} {side}: {final_size}")
             
-            # STEP 2: Send Order (5% Slippage for Volatility)
+            # 2. SEND ORDER
             result = self.exchange.market_open(coin, is_buy, final_size, None, 0.05)
 
+            # 3. CHECK RESULT
             if result['status'] == 'ok': 
                 return True
             else:
-                # If this prints, it's a balance or limit issue
+                # CRITICAL: Return the ACTUAL error message
+                # Hyperliquid errors are often inside response['data']
                 print(f"xx REJECT {coin}: {result}")
-                return False
+                return str(result) 
         except Exception as e:
             print(f"xx EXEC ERROR {coin}: {e}")
-            return False
+            return str(e)
 
     def place_trap(self, coin, side, price, size_usd):
         try:
             is_buy = True if side == "BUY" else False
-            
-            # Calculate raw size
             raw_size = size_usd / float(price)
-            
-            # Format Size
             final_size = self._get_precise_size(coin, raw_size)
-            
-            # Format Price (5 Sig Figs)
             final_price = float(f"{float(price):.5g}")
-            
             self.exchange.order(coin, is_buy, final_size, final_price, {"limit": {"tif": "Gtc"}})
             return True
         except: return False
