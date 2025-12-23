@@ -8,7 +8,7 @@ from config import conf
 
 warnings.simplefilter("ignore")
 
-# TIER: RAILWAY CLOUD COMMANDER (STABLE RELEASE)
+# TIER: RAILWAY CLOUD COMMANDER (FORCE BOOT VERSION)
 ANCHOR_FILE = conf.get_path("equity_anchor.json")
 BTC_TICKER = "BTC"
 SESSION_START_TIME = time.time()
@@ -138,7 +138,7 @@ try:
     
     print(">> [2/10] Initializing Organs...")
     vision = Vision()
-    hands = Hands() # INSTANT INIT (Lazy Load)
+    hands = Hands() # INSTANT INIT
     xeno = Xenomorph()
     whale = SmartMoney()
     ratchet = DeepSea()
@@ -157,9 +157,14 @@ def main_loop():
     global STARTING_EQUITY, RADAR_CACHE
     print("🦅 LUMA CLOUD COMMANDER ONLINE")
     
+    # 🟢 FORCE BOOT: Update Dashboard BEFORE connecting
+    # This ensures visual confirmation immediately
+    update_dashboard(0, 0, "SYSTEM BOOTING...", [], "INIT", "--", [])
+    print(">> DASHBOARD: Visuals Initialized.")
+    
     try:
         address = conf.wallet_address
-        msg.send("info", "🦅 **LUMA CLOUD:** Deployment Fixed.")
+        msg.send("info", "🦅 **LUMA CLOUD:** Force Boot Complete.")
         
         # Init Leverage (This will trigger the first connection)
         for coin, rules in FLEET_CONFIG.items():
@@ -175,7 +180,6 @@ def main_loop():
             session_data = chronos.get_session()
             session_name = session_data['name']
             
-            # HISTORY
             if time.time() - last_history_check > 14400: 
                 try:
                     btc_daily = vision.get_candles(BTC_TICKER, "1d")
@@ -185,7 +189,6 @@ def main_loop():
                 except: pass
             history_data = cached_history_data
             
-            # FETCH USER STATE
             equity = 0.0
             cash = 0.0
             clean_positions = []
@@ -216,24 +219,19 @@ def main_loop():
             prince_margin_target = total_investable_cash * 0.25
             meme_margin_target = total_investable_cash * 0.1666
             
-            # Secured Coins
             secured = ratchet.secured_coins
 
-            # Dashboard Update
             status_msg = f"Scanning... Mode:{risk_mode}"
             update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured)
             print(f">> [{time.strftime('%H:%M:%S')}] Pulse Check: OK", end='\r')
 
-            # Financial Report
             if time.time() - last_finance_report > 3600:
                 try:
                     msg.notify_financial(equity, current_pnl, len(clean_positions), risk_mode)
                     last_finance_report = time.time()
                 except: pass
 
-            # TRADING LOOP
             for coin, rules in FLEET_CONFIG.items():
-                
                 existing = next((p for p in clean_positions if p['coin'] == coin), None)
                 pending = next((o for o in open_orders if o.get('coin') == coin), None)
                 
@@ -255,7 +253,6 @@ def main_loop():
 
                 if existing or pending: continue 
 
-                # --- ENTRY LOGIC (Only runs if no trade) ---
                 micro_season = season.get_multiplier(rules['type'])
                 macro_mult = session_data['aggression'] * history_data['multiplier']
                 total_mult = macro_mult * micro_season['mult']
@@ -297,8 +294,6 @@ def main_loop():
                                 else:
                                     update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=f"❌ {coin}: {str(result)}")
 
-            # MEMORY PROTECTION & RATCHET LOGIC
-            # Only run the Ratchet if we successfully fetched fresh data.
             if data_fetched:
                 ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
                 if ratchet_events:
@@ -309,7 +304,6 @@ def main_loop():
             
     except Exception as e:
         print(f"xx CRITICAL: {e}")
-        # Only try to send message if msg is initialized, otherwise just print
         try: msg.send("errors", f"CRASH: {e}")
         except: pass
 
