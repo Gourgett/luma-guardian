@@ -14,43 +14,57 @@ class Hands:
             self.info = Info(conf.base_url, skip_ws=True)
             self.exchange = Exchange(self.account, conf.base_url, self.account.address)
 
-            # UNIVERSAL CODE: Ask Hyperliquid for the "Rules of Engagement"
-            # We map every single asset to its strict decimal limits immediately.
+            # 1. LOAD RULES FROM EXCHANGE
             self.meta = self.info.meta()
             self.coin_rules = {}
             for asset in self.meta['universe']:
                 self.coin_rules[asset['name']] = asset['szDecimals']
             
-            print(f">> HANDS ARMED: Loaded Rules for {len(self.coin_rules)} Assets")
+            # 2. SAFETY OVERRIDES (The "Anti-Reject" Layer)
+            # We explicitly force these coins to Integer-Only (0 decimals)
+            # This prevents the "Default to 2" bug that kills kPEPE orders.
+            self.manual_overrides = {
+                'kPEPE': 0,
+                'WIF': 0,
+                'PEPE': 0,
+                'BONK': 0,
+                'SHIB': 0
+            }
+            
+            print(f">> HANDS ARMED: Loaded {len(self.coin_rules)} Assets (With Safety Overrides)")
         except Exception as e:
             print(f"xx HANDS INIT FAIL: {e}")
+            # Fallback to empty if init fails, logic below handles it
+            self.coin_rules = {}
+            self.manual_overrides = {'kPEPE': 0, 'WIF': 0}
 
     def _get_precise_size(self, coin, size):
         """
-        THE UNIVERSAL FORMATTER
-        Does not 'round' mathematically. It asks the Exchange Rules for the specific
-        decimal count (szDecimals) and formats the number to match perfectly.
+        Determines the exact allowed size format.
+        Priority: 
+        1. Manual Override (Safety)
+        2. Exchange Rule (Meta)
+        3. Default (2 decimals)
         """
         try:
-            # 1. Ask Hyperliquid: "How many decimals for this coin?"
-            # Default to 2 if unknown, but for WIF/kPEPE this returns 0 or 1.
-            decimals = self.coin_rules.get(coin, 2)
+            # CHECK OVERRIDE FIRST
+            if coin in self.manual_overrides:
+                decimals = self.manual_overrides[coin]
+            else:
+                decimals = self.coin_rules.get(coin, 2) # Default to 2 if unknown
             
-            # 2. The "Russia" Logic (Safe Truncation via String Formatting)
-            # This avoids the "Round Up" bug that causes "Insufficient Margin" errors.
-            # We create a formatter string like "{:.0f}" or "{:.4f}" dynamically.
-            
+            # THE INTEGER FORCE (For kPEPE/WIF)
             if decimals == 0:
-                return int(size) # Force Integer for Memecoins (WIF, kPEPE)
+                return int(size) 
             
-            # Create a string factor to chop off decimals without rounding up
+            # THE TRUNCATOR (For SOL/ETH)
             factor = 10 ** decimals
             truncated = math.floor(size * factor) / factor
             return truncated
             
         except Exception as e:
             print(f"xx FORMAT ERROR {coin}: {e}")
-            return size
+            return int(size) # Panic fallback to integer
 
     def set_leverage_all(self, coins, leverage):
         for coin in coins:
@@ -59,21 +73,23 @@ class Hands:
 
     def place_market_order(self, coin, side, size):
         try:
-            # STEP 1: Get the exact allowed size format
+            # STEP 1: Format Size
             final_size = self._get_precise_size(coin, size)
             is_buy = True if side == "BUY" else False
 
-            if final_size <= 0: return False
+            if final_size <= 0: 
+                print(f"xx SIZE ZERO {coin}")
+                return False
 
             print(f">> EXEC {coin} {side}: {final_size}")
             
-            # STEP 2: Send with Slippage Tolerance
+            # STEP 2: Send Order (5% Slippage for Volatility)
             result = self.exchange.market_open(coin, is_buy, final_size, None, 0.05)
 
             if result['status'] == 'ok': 
                 return True
             else:
-                # This will show us "Margin" or "Precision" errors if they happen
+                # If this prints, it's a balance or limit issue
                 print(f"xx REJECT {coin}: {result}")
                 return False
         except Exception as e:
@@ -87,10 +103,10 @@ class Hands:
             # Calculate raw size
             raw_size = size_usd / float(price)
             
-            # Format Size (Universal)
+            # Format Size
             final_size = self._get_precise_size(coin, raw_size)
             
-            # Format Price (Hyperliquid usually takes 5 sig figs, but we just need safety)
+            # Format Price (5 Sig Figs)
             final_price = float(f"{float(price):.5g}")
             
             self.exchange.order(coin, is_buy, final_size, final_price, {"limit": {"tif": "Gtc"}})
