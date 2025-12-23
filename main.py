@@ -8,11 +8,12 @@ from config import conf
 
 warnings.simplefilter("ignore")
 
-# TIER: RAILWAY CLOUD COMMANDER (STABILITY PATCHED)
+# TIER: RAILWAY CLOUD COMMANDER (STABLE RELEASE)
 ANCHOR_FILE = conf.get_path("equity_anchor.json")
 BTC_TICKER = "BTC"
 SESSION_START_TIME = time.time()
 
+# --- FLEET CONFIGURATION ---
 FLEET_CONFIG = {
     "SOL":   {"type": "PRINCE", "lev": 10, "risk_mult": 1.0, "stop_loss": 0.03},
     "SUI":   {"type": "PRINCE", "lev": 10, "risk_mult": 1.0, "stop_loss": 0.03},
@@ -83,13 +84,20 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", ses
                 entry = p['entry']
                 pnl_val = p['pnl']
                 side = "LONG" if size > 0 else "SHORT"
+                
+                # Logic: Calculate ROE
                 lev = FLEET_CONFIG.get(coin, {}).get('lev', 10)
                 margin = (abs(size) * entry) / lev
                 roe = 0.0
                 if margin > 0: roe = (pnl_val / margin) * 100
+                
                 is_secured = coin in secured_list
                 icon = "🔒" if is_secured else "" 
-                pos_lines.append(f"{coin}|{side}|{pnl_val:.2f}|{roe:.1f}|{icon}")
+                
+                # --- VISUAL FIX: Combine $ and % ---
+                display_pnl = f"${pnl_val:.2f} ({roe:.1f}%)"
+                
+                pos_lines.append(f"{coin}|{side}|{display_pnl}|{roe:.1f}|{icon}")
             pos_str = "::".join(pos_lines)
 
         radar_lines = []
@@ -130,7 +138,7 @@ try:
     
     print(">> [2/10] Initializing Organs...")
     vision = Vision()
-    hands = Hands()
+    hands = Hands() # INSTANT INIT (Lazy Load)
     xeno = Xenomorph()
     whale = SmartMoney()
     ratchet = DeepSea()
@@ -151,9 +159,9 @@ def main_loop():
     
     try:
         address = conf.wallet_address
-        msg.send("info", "🦅 **LUMA CLOUD:** Memory Patch Active.")
+        msg.send("info", "🦅 **LUMA CLOUD:** Deployment Fixed.")
         
-        # Init Leverage
+        # Init Leverage (This will trigger the first connection)
         for coin, rules in FLEET_CONFIG.items():
             try: hands.set_leverage_all([coin], leverage=rules['lev'])
             except: pass
@@ -167,7 +175,7 @@ def main_loop():
             session_data = chronos.get_session()
             session_name = session_data['name']
             
-            # --- HISTORY DATA ---
+            # HISTORY
             if time.time() - last_history_check > 14400: 
                 try:
                     btc_daily = vision.get_candles(BTC_TICKER, "1d")
@@ -177,12 +185,12 @@ def main_loop():
                 except: pass
             history_data = cached_history_data
             
-            # --- FETCH USER STATE ---
+            # FETCH USER STATE
             equity = 0.0
             cash = 0.0
             clean_positions = []
             open_orders = [] 
-            data_fetched = False # <--- THE FIX
+            data_fetched = False
             
             try:
                 user_state = vision.get_user_state(address)
@@ -191,18 +199,13 @@ def main_loop():
                     cash = float(user_state.get('withdrawable', 0))
                     clean_positions = normalize_positions(user_state.get('assetPositions', []))
                     open_orders = user_state.get('openOrders', [])
-                    data_fetched = True # <--- MARK AS SUCCESS
-            except Exception as e:
-                # If network fails, we keep data_fetched = False
-                # This prevents us from wiping memory
-                pass
+                    data_fetched = True 
+            except Exception as e: pass
             
-            # Anchor Logic
             if STARTING_EQUITY == 0.0 and equity > 0:
                 STARTING_EQUITY = load_anchor(equity)
             current_pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
             
-            # Risk Mode
             risk_mode = "AGGRESSIVE"
             investable_pct = 0.60 
             if current_pnl > 5.00:
@@ -228,14 +231,12 @@ def main_loop():
                     last_finance_report = time.time()
                 except: pass
 
-            # --- TRADING LOOP ---
+            # TRADING LOOP
             for coin, rules in FLEET_CONFIG.items():
                 
-                # Check for existing/pending
                 existing = next((p for p in clean_positions if p['coin'] == coin), None)
                 pending = next((o for o in open_orders if o.get('coin') == coin), None)
                 
-                # Update Radar
                 try: candles = vision.get_candles(coin, "1h") 
                 except: candles = []
                 
@@ -296,10 +297,8 @@ def main_loop():
                                 else:
                                     update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=f"❌ {coin}: {str(result)}")
 
-            # --- CRITICAL FIX: MEMORY PROTECTION ---
+            # MEMORY PROTECTION & RATCHET LOGIC
             # Only run the Ratchet if we successfully fetched fresh data.
-            # If the network failed (data_fetched=False), we SKIP this block.
-            # This prevents the bot from wiping memory when it sees an empty list due to error.
             if data_fetched:
                 ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
                 if ratchet_events:
@@ -310,7 +309,9 @@ def main_loop():
             
     except Exception as e:
         print(f"xx CRITICAL: {e}")
-        msg.send("errors", f"CRASH: {e}")
+        # Only try to send message if msg is initialized, otherwise just print
+        try: msg.send("errors", f"CRASH: {e}")
+        except: pass
 
 if __name__ == "__main__":
     try: main_loop()
