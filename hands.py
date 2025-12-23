@@ -9,34 +9,24 @@ from config import conf
 
 class Hands:
     def __init__(self):
-        # 🟢 INSTANT STARTUP: Do NOT connect here.
-        # This prevents Railway from killing the bot during "Healthcheck".
+        # 🟢 INSTANT START: No connection here.
         self.exchange = None
         self.info = None
         self.account = None
-        self.coin_rules = {}
-        # Safety defaults in case connection fails later
         self.manual_overrides = {'kPEPE': 0, 'WIF': 0, 'PEPE': 0, 'BONK': 0}
-        print(">> HANDS: System Initialized (Lazy Mode)")
+        print(">> HANDS: Initialized (Lazy Mode)")
 
     def _connect(self):
-        """The actual connection logic, run only when needed."""
         try:
-            print(">> HANDS: Establishing Uplink...")
+            print(">> HANDS: Connecting...")
             self.account = eth_account.Account.from_key(conf.private_key)
             self.info = Info(conf.base_url, skip_ws=True)
             self.exchange = Exchange(self.account, conf.base_url, self.account.address)
-            
-            # Try to load rules, but don't crash if it fails
             try:
                 self.meta = self.info.meta()
-                self.coin_rules = {}
-                for asset in self.meta['universe']:
-                    self.coin_rules[asset['name']] = asset['szDecimals']
+                self.coin_rules = {a['name']: a['szDecimals'] for a in self.meta['universe']}
                 print(f">> HANDS CONNECTED: {len(self.coin_rules)} Assets")
-            except:
-                print(">> HANDS: Metadata fetch skipped (Using defaults)")
-            
+            except: pass
             return True
         except Exception as e:
             print(f"xx CONNECTION FAILED: {e}")
@@ -44,23 +34,18 @@ class Hands:
             return False
 
     def _ensure_connection(self):
-        """Self-Healing: If connection is dead, fix it."""
-        if self.exchange is None:
-            return self._connect()
+        if self.exchange is None: return self._connect()
         return True
 
     def _get_precise_size(self, coin, size):
         try:
-            if coin in self.manual_overrides:
-                decimals = self.manual_overrides[coin]
-            else:
-                decimals = self.coin_rules.get(coin, 2) 
+            decimals = self.manual_overrides.get(coin, 2)
+            if not self.coin_rules: decimals = 2
+            elif coin not in self.manual_overrides: decimals = self.coin_rules.get(coin, 2)
             
             if decimals == 0: return int(size)
-            
             factor = 10 ** decimals
-            truncated = math.floor(size * factor) / factor
-            return truncated
+            return math.floor(size * factor) / factor
         except: return int(size)
 
     def set_leverage_all(self, coins, leverage):
@@ -70,42 +55,28 @@ class Hands:
             except: pass
 
     def cancel_active_orders(self, coin):
-        # Critical for allowing the bot to close trades
         if not self._ensure_connection(): return False
         try:
-            print(f">> CLEARING LOCKS for {coin}...")
             self.exchange.cancel_all_orders(coin)
-            time.sleep(0.5) 
+            time.sleep(0.5)
             return True
-        except Exception as e:
-            print(f"xx CANCEL ERROR {coin}: {e}")
-            self.exchange = None # Force reconnect next time
+        except:
+            self.exchange = None
             return False
 
     def place_market_order(self, coin, side, size):
-        # 1. HEAL CONNECTION
-        if not self._ensure_connection(): 
-            return "CONNECTION_DIED"
-
+        if not self._ensure_connection(): return "CONNECTION_DIED"
         try:
             final_size = self._get_precise_size(coin, size)
             is_buy = True if side == "BUY" else False
-
             if final_size <= 0: return "ZERO_SIZE"
-
+            
             print(f">> EXEC {coin} {side}: {final_size}")
             result = self.exchange.market_open(coin, is_buy, final_size, None, 0.05)
-
-            if result['status'] == 'ok': 
-                return True
-            else:
-                print(f"xx REJECT {coin}: {result}")
-                return str(result) 
+            if result['status'] == 'ok': return True
+            return str(result)
         except Exception as e:
-            print(f"xx EXEC ERROR {coin}: {e}")
-            # If the error suggests a bad connection, kill it so we reconnect next time
-            if "has no attribute" in str(e) or "client" in str(e):
-                self.exchange = None 
+            if "attribute" in str(e): self.exchange = None
             return str(e)
 
     def place_trap(self, coin, side, price, size_usd):
