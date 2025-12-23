@@ -20,14 +20,8 @@ class Hands:
             for asset in self.meta['universe']:
                 self.coin_rules[asset['name']] = asset['szDecimals']
             
-            # 2. SAFETY OVERRIDES (Force Integer for Meme Coins)
-            self.manual_overrides = {
-                'kPEPE': 0,
-                'WIF': 0,
-                'PEPE': 0,
-                'BONK': 0
-            }
-            
+            # 2. SAFETY OVERRIDES
+            self.manual_overrides = {'kPEPE': 0, 'WIF': 0, 'PEPE': 0, 'BONK': 0}
             print(f">> HANDS ARMED: Loaded {len(self.coin_rules)} Assets")
         except Exception as e:
             print(f"xx HANDS INIT FAIL: {e}")
@@ -36,48 +30,50 @@ class Hands:
 
     def _get_precise_size(self, coin, size):
         try:
-            # CHECK OVERRIDE FIRST
             if coin in self.manual_overrides:
                 decimals = self.manual_overrides[coin]
             else:
                 decimals = self.coin_rules.get(coin, 2) 
             
-            # FORCE INTEGER (The Anti-Reject Fix)
-            if decimals == 0:
-                return int(size)
+            if decimals == 0: return int(size)
             
-            # TRUNCATE DECIMALS (The Precision Fix)
             factor = 10 ** decimals
             truncated = math.floor(size * factor) / factor
             return truncated
-            
-        except:
-            return int(size) # Safe fallback
+        except: return int(size)
 
     def set_leverage_all(self, coins, leverage):
         for coin in coins:
             try: self.exchange.update_leverage(leverage, coin)
             except: pass
 
+    def cancel_active_orders(self, coin):
+        """
+        CRITICAL FIX: Unlocks the position by cancelling open limits/traps
+        before attempting to close.
+        """
+        try:
+            print(f">> CLEARING LOCKS for {coin}...")
+            self.exchange.cancel_all_orders(coin)
+            time.sleep(0.5) # Give it a moment to clear
+            return True
+        except Exception as e:
+            print(f"xx CANCEL ERROR {coin}: {e}")
+            return False
+
     def place_market_order(self, coin, side, size):
         try:
-            # 1. FORMAT SIZE
             final_size = self._get_precise_size(coin, size)
             is_buy = True if side == "BUY" else False
 
             if final_size <= 0: return "ZERO_SIZE"
 
             print(f">> EXEC {coin} {side}: {final_size}")
-            
-            # 2. SEND ORDER
             result = self.exchange.market_open(coin, is_buy, final_size, None, 0.05)
 
-            # 3. CHECK RESULT
             if result['status'] == 'ok': 
                 return True
             else:
-                # CRITICAL: Return the ACTUAL error message
-                # Hyperliquid errors are often inside response['data']
                 print(f"xx REJECT {coin}: {result}")
                 return str(result) 
         except Exception as e:
