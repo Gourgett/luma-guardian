@@ -8,12 +8,10 @@ from config import conf
 
 warnings.simplefilter("ignore")
 
-# TIER: RAILWAY CLOUD COMMANDER (FORCE BOOT VERSION)
 ANCHOR_FILE = conf.get_path("equity_anchor.json")
 BTC_TICKER = "BTC"
 SESSION_START_TIME = time.time()
 
-# --- FLEET CONFIGURATION ---
 FLEET_CONFIG = {
     "SOL":   {"type": "PRINCE", "lev": 10, "risk_mult": 1.0, "stop_loss": 0.03},
     "SUI":   {"type": "PRINCE", "lev": 10, "risk_mult": 1.0, "stop_loss": 0.03},
@@ -66,7 +64,6 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", ses
     try:
         if STARTING_EQUITY == 0.0 and equity > 0: 
             STARTING_EQUITY = load_anchor(equity)
-            
         pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
         proj_30d = calculate_projection(pnl)
         
@@ -85,7 +82,6 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", ses
                 pnl_val = p['pnl']
                 side = "LONG" if size > 0 else "SHORT"
                 
-                # Logic: Calculate ROE
                 lev = FLEET_CONFIG.get(coin, {}).get('lev', 10)
                 margin = (abs(size) * entry) / lev
                 roe = 0.0
@@ -94,7 +90,7 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", ses
                 is_secured = coin in secured_list
                 icon = "🔒" if is_secured else "" 
                 
-                # --- VISUAL FIX: Combine $ and % ---
+                # MERGED PNL DISPLAY
                 display_pnl = f"${pnl_val:.2f} ({roe:.1f}%)"
                 
                 pos_lines.append(f"{coin}|{side}|{display_pnl}|{roe:.1f}|{icon}")
@@ -123,7 +119,7 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", ses
     except Exception as e: pass
 
 try:
-    print(">> [1/10] Loading Modules...")
+    print(">> LOADING MODULES...")
     from vision import Vision
     from hands import Hands
     from xenomorph import Xenomorph
@@ -136,9 +132,8 @@ try:
     from seasonality import Seasonality
     from predator import Predator
     
-    print(">> [2/10] Initializing Organs...")
     vision = Vision()
-    hands = Hands() # INSTANT INIT
+    hands = Hands() # Lazy Load
     xeno = Xenomorph()
     whale = SmartMoney()
     ratchet = DeepSea()
@@ -148,25 +143,22 @@ try:
     oracle = Oracle()
     season = Seasonality()
     predator = Predator()
-    print(">> SYSTEM INTEGRITY: 100%")
+    print(">> SYSTEM READY")
 except Exception as e:
-    print(f"xx CRITICAL LOAD ERROR: {e}")
+    print(f"xx LOAD ERROR: {e}")
     sys.exit()
 
 def main_loop():
     global STARTING_EQUITY, RADAR_CACHE
-    print("🦅 LUMA CLOUD COMMANDER ONLINE")
+    print("🦅 LUMA BOT ENGINE STARTING")
     
-    # 🟢 FORCE BOOT: Update Dashboard BEFORE connecting
-    # This ensures visual confirmation immediately
-    update_dashboard(0, 0, "SYSTEM BOOTING...", [], "INIT", "--", [])
-    print(">> DASHBOARD: Visuals Initialized.")
+    # Init Force Update
+    update_dashboard(0, 0, "INITIALIZING...", [], "INIT", "--", [])
     
     try:
         address = conf.wallet_address
-        msg.send("info", "🦅 **LUMA CLOUD:** Force Boot Complete.")
+        msg.send("info", "🦅 **LUMA:** Engine Restarted.")
         
-        # Init Leverage (This will trigger the first connection)
         for coin, rules in FLEET_CONFIG.items():
             try: hands.set_leverage_all([coin], leverage=rules['lev'])
             except: pass
@@ -223,7 +215,7 @@ def main_loop():
 
             status_msg = f"Scanning... Mode:{risk_mode}"
             update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured)
-            print(f">> [{time.strftime('%H:%M:%S')}] Pulse Check: OK", end='\r')
+            print(f">> Pulse: OK", end='\r')
 
             if time.time() - last_finance_report > 3600:
                 try:
