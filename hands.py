@@ -9,40 +9,42 @@ from config import conf
 
 class Hands:
     def __init__(self):
+        # DO NOT CONNECT HERE. Just set up variables.
+        # This prevents the "Healthcheck Hang" that burns credits.
         self.exchange = None
         self.info = None
         self.account = None
-        
-        # Initial Connection Attempt
-        self._connect()
-        
-        # SAFETY OVERRIDES
+        self.coin_rules = {}
         self.manual_overrides = {'kPEPE': 0, 'WIF': 0, 'PEPE': 0, 'BONK': 0}
+        print(">> HANDS: System Ready (Lazy Load)")
 
     def _connect(self):
         """Attempts to establish connection to Hyperliquid"""
         try:
+            print(">> HANDS: Establishing Uplink...")
             self.account = eth_account.Account.from_key(conf.private_key)
             self.info = Info(conf.base_url, skip_ws=True)
             self.exchange = Exchange(self.account, conf.base_url, self.account.address)
             
             # Load Rules
-            self.meta = self.info.meta()
-            self.coin_rules = {}
-            for asset in self.meta['universe']:
-                self.coin_rules[asset['name']] = asset['szDecimals']
-                
-            print(f">> HANDS CONNECTED: {len(self.coin_rules)} Assets Loaded")
+            try:
+                self.meta = self.info.meta()
+                self.coin_rules = {}
+                for asset in self.meta['universe']:
+                    self.coin_rules[asset['name']] = asset['szDecimals']
+                print(f">> HANDS CONNECTED: {len(self.coin_rules)} Assets")
+            except:
+                print(">> HANDS: Metadata fetch skipped (Using defaults)")
+            
             return True
         except Exception as e:
             print(f"xx CONNECTION FAILED: {e}")
-            self.exchange = None # Ensure it is None so we can detect it later
+            self.exchange = None
             return False
 
     def _ensure_connection(self):
-        """Self-Healing: Reconnects if the exchange object is missing"""
+        """Checks connection before acting"""
         if self.exchange is None:
-            print(">> HANDS: Connection lost. Reconnecting...")
             return self._connect()
         return True
 
@@ -75,6 +77,7 @@ class Hands:
             return True
         except Exception as e:
             print(f"xx CANCEL ERROR {coin}: {e}")
+            self.exchange = None # Reset connection on error
             return False
 
     def place_market_order(self, coin, side, size):
@@ -98,8 +101,7 @@ class Hands:
                 return str(result) 
         except Exception as e:
             print(f"xx EXEC ERROR {coin}: {e}")
-            # If error is about 'exchange' attribute, force a reconnect next time
-            if "has no attribute" in str(e):
+            if "has no attribute" in str(e) or "client" in str(e):
                 self.exchange = None 
             return str(e)
 
