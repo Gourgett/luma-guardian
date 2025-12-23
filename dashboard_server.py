@@ -7,7 +7,7 @@ import time
 import sys
 from config import conf
 
-# PORT CONFIGURATION (Required for Railway)
+# 1. SETUP PORT (Crucial for Railway)
 PORT = int(os.environ.get("PORT", 8080))
 
 class DashboardHandler(http.server.SimpleHTTPRequestHandler):
@@ -18,42 +18,42 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             
-            # Serve the state file, or empty default if not ready
             state_path = conf.get_path("dashboard_state.json")
             if os.path.exists(state_path):
                 with open(state_path, "r") as f:
                     self.wfile.write(f.read().encode())
             else:
-                # Default "Booting" state
                 self.wfile.write(json.dumps({
-                    "equity": "---", "cash": "---", "pnl": "---",
-                    "status": "SYSTEM BOOTING...", "events": "Wait for init...",
-                    "positions": "NO_TRADES", "radar": "", "updated": time.time()
+                    "status": "BOOTING...", 
+                    "equity": "---", 
+                    "events": "System Starting..."
                 }).encode())
         else:
-            # Serve the HTML dashboard
             super().do_GET()
 
-def start_bot_logic():
-    """Runs the main bot loop in a separate thread so it doesn't block the server"""
-    print(">> SERVER: Launching Bot Logic in Background...")
-    time.sleep(1) # Give server 1s to breathe
+def launch_trading_bot():
+    """Starts the trading engine in the background"""
+    print(">> SERVER: Launching Trading Engine...")
+    time.sleep(2) # Wait 2s to ensure Server is fully alive
     try:
         import main
         main.main_loop()
     except Exception as e:
-        print(f"xx BOT CRASHED: {e}")
+        print(f"xx BOT DIED: {e}")
 
 if __name__ == "__main__":
-    # 1. Start the Bot Thread
-    bot_thread = threading.Thread(target=start_bot_logic, daemon=True)
+    # 2. START SERVER FIRST (To pass Healthcheck)
+    print(f"🦅 DASHBOARD ONLINE: Listening on port {PORT}")
+    
+    # Create the server object
+    server = socketserver.TCPServer(("", PORT), DashboardHandler)
+
+    # 3. LAUNCH BOT IN BACKGROUND THREAD
+    bot_thread = threading.Thread(target=launch_trading_bot, daemon=True)
     bot_thread.start()
 
-    # 2. Start the Web Server (Main Thread)
-    # This must happen on the main thread for Railway to detect the port binding
-    print(f"🦅 LUMA DASHBOARD SERVER LISTENING ON PORT {PORT}")
+    # 4. RUN SERVER FOREVER (Main Process)
     try:
-        with socketserver.TCPServer(("", PORT), DashboardHandler) as httpd:
-            httpd.serve_forever()
+        server.serve_forever()
     except Exception as e:
-        print(f"xx SERVER CRASH: {e}")
+        print(f"xx SERVER FAILED: {e}")
