@@ -8,7 +8,7 @@ from config import conf
 
 warnings.simplefilter("ignore")
 
-# TIER: RAILWAY CLOUD COMMANDER (VERIFIED EXECUTION)
+# TIER: RAILWAY CLOUD COMMANDER (DIAGNOSTIC MODE)
 ANCHOR_FILE = conf.get_path("equity_anchor.json")
 BTC_TICKER = "BTC"
 SESSION_START_TIME = time.time()
@@ -89,6 +89,7 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", ses
                 margin = (abs(size) * entry) / lev
                 roe = 0.0
                 if margin > 0: roe = (pnl_val / margin) * 100
+                
                 is_secured = coin in secured_list
                 icon = "🔒" if is_secured else "" 
                 pos_lines.append(f"{coin}|{side}|{pnl_val:.2f}|{roe:.1f}|{icon}")
@@ -155,7 +156,7 @@ def main_loop():
     print("🦅 LUMA CLOUD COMMANDER ONLINE")
     try:
         address = conf.wallet_address
-        msg.send("info", "🦅 **LUMA CLOUD:** Execution Verification Active.")
+        msg.send("info", "🦅 **LUMA CLOUD:** Diagnostics Active.")
         
         for coin, rules in FLEET_CONFIG.items():
             try:
@@ -207,6 +208,8 @@ def main_loop():
             total_investable_cash = equity * investable_pct
             prince_margin_target = total_investable_cash * 0.25
             meme_margin_target = total_investable_cash * 0.1666
+            
+            # Use property name 'secured_coins' to prevent crash
             secured = ratchet.secured_coins
 
             status_msg = f"Scanning... Mode:{risk_mode}"
@@ -228,7 +231,6 @@ def main_loop():
                 try: candles = vision.get_candles(coin, "1h") 
                 except: candles = []
                 
-                # --- STABILIZED RADAR ---
                 if candles:
                     curr_p = float(candles[-1]['c'])
                     formatted_p = f"${curr_p:.4f}"
@@ -242,7 +244,6 @@ def main_loop():
                         RADAR_CACHE[coin] = {"price": formatted_p, "status": "👀 SCANNING", "color": "gray"}
                 else:
                     continue
-                # ---------------------------
 
                 if existing or pending: continue 
 
@@ -268,7 +269,6 @@ def main_loop():
                     if predator_signal != "EXHAUSTION_SELL" or sm_signal['side'] == "SELL":
                          if oracle.consult(coin, sm_signal['type'], sm_signal['price'], context_str):
                             side = sm_signal['side']
-                            # TRAP LOGIC (Limit Order)
                             if hands.place_trap(coin, side, sm_signal['price'], final_size):
                                 log = f"{coin}: {sm_signal['type']} ({risk_mode})"
                                 update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=log)
@@ -282,15 +282,23 @@ def main_loop():
                         else:
                             if oracle.consult(coin, "BREAKOUT_BUY", "Market", context_str):
                                 coin_size = final_size / float(candles[-1]['c'])
-                                # MARKET BUY LOGIC (Immediate Execution)
-                                # FIX: Only log SUCCESS if place_market_order returns True
-                                if hands.place_market_order(coin, "BUY", coin_size):
+                                
+                                # --- MARKET BUY EXECUTION & DIAGNOSTICS ---
+                                # result is True OR an error string
+                                result = hands.place_market_order(coin, "BUY", coin_size)
+                                
+                                if result is True:
                                     log = f"{coin}: MARKET BUY ({risk_mode})"
                                     update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=log)
                                     msg.notify_trade(coin, "MARKET_BUY", "Market", final_size)
                                 else:
-                                    # LOG FAILURE
-                                    err_log = f"❌ {coin}: ORDER REJECTED"
+                                    # PARSE ERROR FOR DISPLAY
+                                    err_msg = str(result)
+                                    if "Insufficient Margin" in err_msg: short_err = "NO MARGIN"
+                                    elif "Invalid Size" in err_msg: short_err = "BAD SIZE"
+                                    else: short_err = "REJECTED" # Will verify in logs
+                                    
+                                    err_log = f"❌ {coin}: {short_err}"
                                     update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=err_log)
 
             ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
