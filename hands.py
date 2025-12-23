@@ -9,24 +9,25 @@ from config import conf
 
 class Hands:
     def __init__(self):
-        # DO NOT CONNECT HERE. Just set up variables.
-        # This prevents the "Healthcheck Hang" that burns credits.
+        # 🟢 INSTANT STARTUP: Do NOT connect here.
+        # This prevents Railway from killing the bot during "Healthcheck".
         self.exchange = None
         self.info = None
         self.account = None
         self.coin_rules = {}
+        # Safety defaults in case connection fails later
         self.manual_overrides = {'kPEPE': 0, 'WIF': 0, 'PEPE': 0, 'BONK': 0}
-        print(">> HANDS: System Ready (Lazy Load)")
+        print(">> HANDS: System Initialized (Lazy Mode)")
 
     def _connect(self):
-        """Attempts to establish connection to Hyperliquid"""
+        """The actual connection logic, run only when needed."""
         try:
             print(">> HANDS: Establishing Uplink...")
             self.account = eth_account.Account.from_key(conf.private_key)
             self.info = Info(conf.base_url, skip_ws=True)
             self.exchange = Exchange(self.account, conf.base_url, self.account.address)
             
-            # Load Rules
+            # Try to load rules, but don't crash if it fails
             try:
                 self.meta = self.info.meta()
                 self.coin_rules = {}
@@ -43,7 +44,7 @@ class Hands:
             return False
 
     def _ensure_connection(self):
-        """Checks connection before acting"""
+        """Self-Healing: If connection is dead, fix it."""
         if self.exchange is None:
             return self._connect()
         return True
@@ -69,6 +70,7 @@ class Hands:
             except: pass
 
     def cancel_active_orders(self, coin):
+        # Critical for allowing the bot to close trades
         if not self._ensure_connection(): return False
         try:
             print(f">> CLEARING LOCKS for {coin}...")
@@ -77,7 +79,7 @@ class Hands:
             return True
         except Exception as e:
             print(f"xx CANCEL ERROR {coin}: {e}")
-            self.exchange = None # Reset connection on error
+            self.exchange = None # Force reconnect next time
             return False
 
     def place_market_order(self, coin, side, size):
@@ -101,6 +103,7 @@ class Hands:
                 return str(result) 
         except Exception as e:
             print(f"xx EXEC ERROR {coin}: {e}")
+            # If the error suggests a bad connection, kill it so we reconnect next time
             if "has no attribute" in str(e) or "client" in str(e):
                 self.exchange = None 
             return str(e)
