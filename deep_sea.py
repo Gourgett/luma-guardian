@@ -1,111 +1,60 @@
-import json
-import os
+import time
 from config import conf
 
 class DeepSea:
     def __init__(self):
-        self.state_file = conf.get_path("ratchet_state.json")
-        self.trauma_center = {} 
         self.secured_coins = []
-        self.load_state()
-
-    def load_state(self):
-        try:
-            if os.path.exists(self.state_file):
-                with open(self.state_file, 'r') as f:
-                    d = json.load(f)
-                    self.trauma_center = d.get("trauma", {})
-                    self.secured_coins = d.get("secured", [])
-        except: pass
-
-    def save_state(self):
-        try:
-            with open(self.state_file, 'w') as f:
-                json.dump({"trauma": self.trauma_center, "secured": self.secured_coins}, f)
-        except: pass
+        
+        # --- CASH TRIGGERS (THE RULES) ---
+        self.trigger_meme = 0.25    # Lock if PnL >= $0.25 (DOGE, WIF, kPEPE)
+        self.trigger_prince = 0.50  # Lock if PnL >= $0.50 (SOL, ETH, SUI)
+        
+        # Buffer to ensure we cover fees when stopping out
+        self.fee_buffer = 0.0015 
 
     def check_trauma(self, hands, coin):
         pass
 
-    def execute_close(self, hands, coin, side, size, reason):
-        print(f">> RATCHET: Closing {coin} ({reason})")
-        # FIX: FORCE POSITIVE SIZE
-        final_size = abs(float(size))
-        close_side = "SELL" if side == "LONG" else "BUY"
-        
-        if hands.place_market_order(coin, close_side, final_size):
-            if coin in self.secured_coins: self.secured_coins.remove(coin)
-            if coin in self.trauma_center: del self.trauma_center[coin]
-            self.save_state()
-            return f"🚫 CLOSED {coin}: {reason}"
-        return None
-
     def manage_positions(self, hands, positions, fleet_config):
         events = []
-        active = [p['coin'] for p in positions]
+        active_coins = [p['coin'] for p in positions]
         
-        # Cleanup
-        for k in list(self.trauma_center.keys()):
-            if k not in active: 
-                del self.trauma_center[k]
-                if k in self.secured_coins: self.secured_coins.remove(k)
-        self.save_state()
+        # Cleanup "Ghost" Secured Coins
+        self.secured_coins = [c for c in self.secured_coins if c in active_coins]
 
         for p in positions:
             coin = p['coin']
-            size = float(p['size'])
-            entry = float(p['entry'])
-            side = "LONG" if size > 0 else "SHORT"
             
-            # Calculate Price & ROE
-            lev = fleet_config.get(coin, {}).get('lev', 10)
-            margin = (abs(size) * entry) / lev
-            roe = (float(p['pnl']) / margin * 100) if margin > 0 else 0
-            curr_price = (float(p['pnl']) / abs(size)) + entry
-
-            # 1. HARD STOP
-            sl = fleet_config.get(coin, {}).get('stop_loss', 0.03)
-            if side == "LONG" and curr_price < entry * (1 - sl):
-                e = self.execute_close(hands, coin, side, size, "HARD_STOP")
-                if e: events.append(e)
-                continue
-            elif side == "SHORT" and curr_price > entry * (1 + sl):
-                e = self.execute_close(hands, coin, side, size, "HARD_STOP")
-                if e: events.append(e)
+            # Skip if already locked/secured
+            if coin in self.secured_coins:
                 continue
 
-            # 2. RATCHET
-            if coin not in self.trauma_center: self.trauma_center[coin] = curr_price
-            best = self.trauma_center[coin]
-            
-            if side == "LONG":
-                if curr_price > best: self.trauma_center[coin] = curr_price
-                best = self.trauma_center[coin] # Re-read updated best
+            try:
+                pnl = float(p['pnl'])
+                entry = float(p['entry'])
+                size = float(p['size'])
                 
-                if roe > 10 and coin not in self.secured_coins:
+                # 1. IDENTIFY TYPE (Meme vs Prince)
+                coin_rules = fleet_config.get(coin, {'type': 'MEME'}) # Default to MEME if unknown
+                c_type = coin_rules.get('type', 'MEME')
+                
+                # 2. SELECT TRIGGER PRICE
+                trigger_price = self.trigger_meme if c_type == 'MEME' else self.trigger_prince
+                
+                # 3. THE TRIGGER LOGIC (Cash Based)
+                # If PnL hits the target ($0.25 or $0.50), we LOCK it.
+                if pnl >= trigger_price:
                     self.secured_coins.append(coin)
-                    events.append(f"🔒 {coin} LOCKED")
-                
-                if coin in self.secured_coins:
-                    drop_limit = best * 0.995 # 0.5% drop
-                    floor = entry * 1.002
-                    if curr_price < max(drop_limit, floor):
-                        e = self.execute_close(hands, coin, side, size, "RATCHET_PROFIT")
-                        if e: events.append(e)
+                    events.append(f"🔒 {coin}: LOCKED @ ${pnl:.2f} (>{trigger_price})")
+                    
+                    # Optional: Print to console for verification
+                    print(f">> RATCHET: Locking {coin} (PnL ${pnl:.2f} >= ${trigger_price})")
 
-            else: # SHORT
-                if curr_price < best: self.trauma_center[coin] = curr_price
-                best = self.trauma_center[coin]
-
-                if roe > 10 and coin not in self.secured_coins:
-                    self.secured_coins.append(coin)
-                    events.append(f"🔒 {coin} LOCKED")
-                
-                if coin in self.secured_coins:
-                    rise_limit = best * 1.005 # 0.5% rise
-                    floor = entry * 0.998
-                    if curr_price > min(rise_limit, floor):
-                        e = self.execute_close(hands, coin, side, size, "RATCHET_PROFIT")
-                        if e: events.append(e)
-
+            except Exception as e:
+                print(f"xx RATCHET ERROR {coin}: {e}")
+                    
         return events
+
+    @property
+    def secured_list(self):
+        return self.secured_coins
