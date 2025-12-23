@@ -7,9 +7,14 @@ class DeepSea:
         # Format: {'DOGE': {'high': 0.30, 'stop': 0.05}}
         self.trauma_ward = {}
         
-        # --- CASH TRIGGERS ---
+        # --- CASH TRIGGERS (PROFIT LOCK) ---
         self.trigger_meme = 0.25    # Lock if PnL > $0.25
         self.trigger_prince = 0.50  # Lock if PnL > $0.50
+        
+        # --- HARD STOP LIMITS (DRAWDOWN) ---
+        # If ROE drops below this % (Negative), we PANIC SELL.
+        self.stop_limit_meme = 25.0   # -25% ROE
+        self.stop_limit_prince = 30.0 # -30% ROE
         
         # --- TRAILING SETTINGS ---
         self.initial_guard = 0.05   # Minimum profit to keep ($)
@@ -18,6 +23,7 @@ class DeepSea:
         self.super_trigger = 10.0   # Activate Supermax at 10% ROE
 
     def check_trauma(self, hands, coin):
+        # We handle trauma inside manage_positions to save API calls
         pass
 
     def manage_positions(self, hands, positions, fleet_config):
@@ -36,58 +42,62 @@ class DeepSea:
                 size = float(p['size'])
                 entry = float(p['entry'])
                 
-                # --- CALCULATE ROE (For the 10% Logic) ---
-                # We need to estimate margin to know percentage
+                # --- CONFIG & METRICS ---
                 c_data = fleet_config.get(coin, {'type': 'MEME', 'lev': 10})
+                
+                # Calculate ROE %
                 lev = c_data.get('lev', 10)
                 margin = (abs(size) * entry) / lev
                 roe = (pnl / margin) * 100 if margin > 0 else 0.0
 
-                # --- IDENTIFY TYPE (For the $0.25/$0.50 Logic) ---
+                # Identify Type
                 c_type = c_data.get('type', 'MEME')
                 trigger_val = self.trigger_meme if c_type == 'MEME' else self.trigger_prince
 
-                # --- LOGIC BRANCH ---
+                # --- 🛑 LAYER 1: HARD STOP LOSS (User Defined) ---
+                # MEME = -25%, PRINCE = -30%
+                stop_threshold = self.stop_limit_meme if c_type == 'MEME' else self.stop_limit_prince
+                
+                # Check if we are deeper than the allowed drawdown
+                if roe < -(stop_threshold):
+                    print(f">> RATCHET: 🚨 HARD STOP hit on {coin} ({roe:.2f}% < -{stop_threshold}%)")
+                    side = "SELL" if size > 0 else "BUY"
+                    if hands.place_market_order(coin, side, abs(size)):
+                        events.append(f"💀 {coin}: STOPPED OUT ({roe:.2f}%)")
+                        continue # Trade killed, move to next
+
+                # --- 💰 LAYER 2: PROFIT MANAGEMENT ---
                 
                 # CASE A: ALREADY SECURED (Trailing Mode)
                 if coin in self.trauma_ward:
                     record = self.trauma_ward[coin]
                     
-                    # 1. UPDATE HIGH WATER MARK
+                    # Update High Water Mark
                     if pnl > record['high']:
                         record['high'] = pnl
                         
-                        # DYNAMIC RATCHET LOGIC
-                        # If ROE > 10%, we choke the stop to 1% deviation (0.99)
-                        # Otherwise, we give it 20% deviation (0.80)
+                        # DYNAMIC RATCHET: 10% ROE -> 1% Deviation
                         current_mult = self.super_trail if roe > self.super_trigger else self.std_trail
-                        
-                        # Calculate new stop
                         potential_stop = record['high'] * current_mult
                         
-                        # Ensure stop never goes DOWN, only UP.
-                        # Also ensure it never drops below our initial $0.05 guard.
+                        # Ratchet only moves UP
                         new_stop = max(self.initial_guard, potential_stop)
-                        
                         if new_stop > record['stop']:
                             record['stop'] = new_stop
                             if roe > self.super_trigger:
-                                print(f">> RATCHET: {coin} SUPERMAX ACTIVE (Stop ${new_stop:.2f})")
+                                print(f">> RATCHET: {coin} SUPERMAX ({roe:.1f}%) Stop: ${new_stop:.2f}")
                     
-                    # 2. CHECK STOP LOSS (Execution)
+                    # Check Trailing Stop
                     if pnl < record['stop']:
-                        print(f">> RATCHET: Closing {coin}. PnL ${pnl:.2f} < Stop ${record['stop']:.2f}")
-                        
-                        # EXECUTE CLOSE
+                        print(f">> RATCHET: Bank {coin}. PnL ${pnl:.2f} < Stop ${record['stop']:.2f}")
                         side = "SELL" if size > 0 else "BUY"
                         if hands.place_market_order(coin, side, abs(size)):
-                            events.append(f"💰 {coin}: BANKED @ ${pnl:.2f} (Peak ${record['high']:.2f})")
+                            events.append(f"💰 {coin}: BANKED @ ${pnl:.2f}")
                             del self.trauma_ward[coin]
 
-                # CASE B: NOT SECURED YET (Waiting for Trigger)
+                # CASE B: NOT SECURED YET (Waiting for Cash Trigger)
                 else:
                     if pnl >= trigger_val:
-                        # INITIALIZE TRAUMA RECORD
                         self.trauma_ward[coin] = {
                             'high': pnl,
                             'stop': self.initial_guard # Starts at $0.05
