@@ -9,24 +9,42 @@ from config import conf
 
 class Hands:
     def __init__(self):
+        self.exchange = None
+        self.info = None
+        self.account = None
+        
+        # Initial Connection Attempt
+        self._connect()
+        
+        # SAFETY OVERRIDES
+        self.manual_overrides = {'kPEPE': 0, 'WIF': 0, 'PEPE': 0, 'BONK': 0}
+
+    def _connect(self):
+        """Attempts to establish connection to Hyperliquid"""
         try:
             self.account = eth_account.Account.from_key(conf.private_key)
             self.info = Info(conf.base_url, skip_ws=True)
             self.exchange = Exchange(self.account, conf.base_url, self.account.address)
-
-            # 1. LOAD RULES
+            
+            # Load Rules
             self.meta = self.info.meta()
             self.coin_rules = {}
             for asset in self.meta['universe']:
                 self.coin_rules[asset['name']] = asset['szDecimals']
-            
-            # 2. SAFETY OVERRIDES
-            self.manual_overrides = {'kPEPE': 0, 'WIF': 0, 'PEPE': 0, 'BONK': 0}
-            print(f">> HANDS ARMED: Loaded {len(self.coin_rules)} Assets")
+                
+            print(f">> HANDS CONNECTED: {len(self.coin_rules)} Assets Loaded")
+            return True
         except Exception as e:
-            print(f"xx HANDS INIT FAIL: {e}")
-            self.coin_rules = {}
-            self.manual_overrides = {'kPEPE': 0, 'WIF': 0}
+            print(f"xx CONNECTION FAILED: {e}")
+            self.exchange = None # Ensure it is None so we can detect it later
+            return False
+
+    def _ensure_connection(self):
+        """Self-Healing: Reconnects if the exchange object is missing"""
+        if self.exchange is None:
+            print(">> HANDS: Connection lost. Reconnecting...")
+            return self._connect()
+        return True
 
     def _get_precise_size(self, coin, size):
         try:
@@ -43,25 +61,27 @@ class Hands:
         except: return int(size)
 
     def set_leverage_all(self, coins, leverage):
+        if not self._ensure_connection(): return
         for coin in coins:
             try: self.exchange.update_leverage(leverage, coin)
             except: pass
 
     def cancel_active_orders(self, coin):
-        """
-        CRITICAL FIX: Unlocks the position by cancelling open limits/traps
-        before attempting to close.
-        """
+        if not self._ensure_connection(): return False
         try:
             print(f">> CLEARING LOCKS for {coin}...")
             self.exchange.cancel_all_orders(coin)
-            time.sleep(0.5) # Give it a moment to clear
+            time.sleep(0.5) 
             return True
         except Exception as e:
             print(f"xx CANCEL ERROR {coin}: {e}")
             return False
 
     def place_market_order(self, coin, side, size):
+        # 1. HEAL CONNECTION
+        if not self._ensure_connection(): 
+            return "CONNECTION_DIED"
+
         try:
             final_size = self._get_precise_size(coin, size)
             is_buy = True if side == "BUY" else False
@@ -78,9 +98,13 @@ class Hands:
                 return str(result) 
         except Exception as e:
             print(f"xx EXEC ERROR {coin}: {e}")
+            # If error is about 'exchange' attribute, force a reconnect next time
+            if "has no attribute" in str(e):
+                self.exchange = None 
             return str(e)
 
     def place_trap(self, coin, side, price, size_usd):
+        if not self._ensure_connection(): return False
         try:
             is_buy = True if side == "BUY" else False
             raw_size = size_usd / float(price)
