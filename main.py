@@ -8,7 +8,7 @@ from config import conf
 
 warnings.simplefilter("ignore")
 
-# TIER: RAILWAY CLOUD COMMANDER (STABILIZED)
+# TIER: RAILWAY CLOUD COMMANDER (VERIFIED EXECUTION)
 ANCHOR_FILE = conf.get_path("equity_anchor.json")
 BTC_TICKER = "BTC"
 SESSION_START_TIME = time.time()
@@ -75,7 +75,6 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", ses
             EVENT_QUEUE.append(f"[{t}] {new_event}")
         events_str = "||".join(list(EVENT_QUEUE))
 
-        # Position String Builder
         pos_str = "NO_TRADES"
         if positions:
             pos_lines = []
@@ -95,7 +94,6 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", ses
                 pos_lines.append(f"{coin}|{side}|{pnl_val:.2f}|{roe:.1f}|{icon}")
             pos_str = "::".join(pos_lines)
 
-        # Radar String Builder
         radar_lines = []
         for coin, data in RADAR_CACHE.items():
             radar_lines.append(f"{coin}|{data['price']}|{data['status']}|{data['color']}")
@@ -157,7 +155,7 @@ def main_loop():
     print("🦅 LUMA CLOUD COMMANDER ONLINE")
     try:
         address = conf.wallet_address
-        msg.send("info", "🦅 **LUMA CLOUD:** System Stabilized.")
+        msg.send("info", "🦅 **LUMA CLOUD:** Execution Verification Active.")
         
         for coin, rules in FLEET_CONFIG.items():
             try:
@@ -230,7 +228,7 @@ def main_loop():
                 try: candles = vision.get_candles(coin, "1h") 
                 except: candles = []
                 
-                # --- STABILIZED RADAR (SAFE MODE) ---
+                # --- STABILIZED RADAR ---
                 if candles:
                     curr_p = float(candles[-1]['c'])
                     formatted_p = f"${curr_p:.4f}"
@@ -241,7 +239,6 @@ def main_loop():
                         limit_px = pending.get('limitPx', '---')
                         RADAR_CACHE[coin] = {"price": formatted_p, "status": f"🛡️ TRAP @ {limit_px}", "color": "cyan"}
                     else:
-                        # Reverted to simple status to prevent crashes
                         RADAR_CACHE[coin] = {"price": formatted_p, "status": "👀 SCANNING", "color": "gray"}
                 else:
                     continue
@@ -271,21 +268,30 @@ def main_loop():
                     if predator_signal != "EXHAUSTION_SELL" or sm_signal['side'] == "SELL":
                          if oracle.consult(coin, sm_signal['type'], sm_signal['price'], context_str):
                             side = sm_signal['side']
-                            log = f"{coin}: {sm_signal['type']} ({risk_mode})"
-                            update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=log)
-                            hands.place_trap(coin, side, sm_signal['price'], final_size)
-                            msg.notify_trade(coin, f"TRAP_{side}", sm_signal['price'], final_size)
+                            # TRAP LOGIC (Limit Order)
+                            if hands.place_trap(coin, side, sm_signal['price'], final_size):
+                                log = f"{coin}: {sm_signal['type']} ({risk_mode})"
+                                update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=log)
+                                msg.notify_trade(coin, f"TRAP_{side}", sm_signal['price'], final_size)
+                            else:
+                                update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=f"❌ {coin}: TRAP FAILED")
                 
                 elif xeno.hunt(coin, candles) == "ATTACK":
                     if predator_signal == "REAL_PUMP" or predator_signal is None:
                         if rules['type'] == "MEME" and session_data['name'] == "ASIA": pass 
                         else:
                             if oracle.consult(coin, "BREAKOUT_BUY", "Market", context_str):
-                                log = f"{coin}: MARKET BUY ({risk_mode})"
-                                update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=log)
                                 coin_size = final_size / float(candles[-1]['c'])
-                                hands.place_market_order(coin, "BUY", coin_size)
-                                msg.notify_trade(coin, "MARKET_BUY", "Market", final_size)
+                                # MARKET BUY LOGIC (Immediate Execution)
+                                # FIX: Only log SUCCESS if place_market_order returns True
+                                if hands.place_market_order(coin, "BUY", coin_size):
+                                    log = f"{coin}: MARKET BUY ({risk_mode})"
+                                    update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=log)
+                                    msg.notify_trade(coin, "MARKET_BUY", "Market", final_size)
+                                else:
+                                    # LOG FAILURE
+                                    err_log = f"❌ {coin}: ORDER REJECTED"
+                                    update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=err_log)
 
             ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
             if ratchet_events:
