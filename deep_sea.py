@@ -3,16 +3,17 @@ from config import conf
 
 class DeepSea:
     def __init__(self):
-        self.secured_coins = []
+        # TRAUMA WARD: Stores the state of secured coins
+        # Format: {'DOGE': {'high': 0.30, 'stop': 0.05}}
+        self.trauma_ward = {}
         
         # --- CASH TRIGGERS ---
         self.trigger_meme = 0.25    # Lock if PnL > $0.25
         self.trigger_prince = 0.50  # Lock if PnL > $0.50
         
-        # --- DEFENSE SETTINGS ---
-        # If a secured coin drops below this PnL, WE SELL.
-        # $0.05 covers fees so you don't lose money.
-        self.breakeven_limit = 0.05 
+        # --- TRAILING SETTINGS ---
+        self.initial_guard = 0.05   # Initial safety net ($)
+        self.trail_percent = 0.80   # Secure 80% of the peak profit
 
     def check_trauma(self, hands, coin):
         pass
@@ -22,7 +23,10 @@ class DeepSea:
         active_coins = [p['coin'] for p in positions]
         
         # 1. CLEANUP: Remove coins we are no longer holding
-        self.secured_coins = [c for c in self.secured_coins if c in active_coins]
+        # We must use list() to avoid runtime errors while modifying dict
+        for coin in list(self.trauma_ward.keys()):
+            if coin not in active_coins:
+                del self.trauma_ward[coin]
 
         for p in positions:
             coin = p['coin']
@@ -31,32 +35,43 @@ class DeepSea:
                 size = float(p['size'])
                 
                 # --- IDENTIFY TYPE ---
-                # Default to MEME if not found, just to be safe
                 c_data = fleet_config.get(coin, {'type': 'MEME'})
                 c_type = c_data.get('type', 'MEME')
-                
                 trigger_val = self.trigger_meme if c_type == 'MEME' else self.trigger_prince
 
                 # --- LOGIC BRANCH ---
                 
-                # CASE A: COIN IS ALREADY SECURED (Watching for drop)
-                if coin in self.secured_coins:
-                    # THE GUARD: If profit drops below $0.05, KILL IT.
-                    if pnl < self.breakeven_limit:
-                        print(f">> RATCHET: Protecting {coin} at ${pnl:.2f}")
+                # CASE A: ALREADY SECURED (Trailing Mode)
+                if coin in self.trauma_ward:
+                    record = self.trauma_ward[coin]
+                    
+                    # 1. UPDATE HIGH WATER MARK (If we made new highs)
+                    if pnl > record['high']:
+                        record['high'] = pnl
+                        # RATCHET UP: Stop is max of ($0.05) OR (80% of Peak)
+                        new_stop = max(self.initial_guard, pnl * self.trail_percent)
+                        record['stop'] = new_stop
+                        # Note: We don't spam events for every update, only the first lock
+                    
+                    # 2. CHECK STOP LOSS (If we dropped)
+                    if pnl < record['stop']:
+                        print(f">> RATCHET: Trailing Stop hit on {coin} @ ${pnl:.2f} (Peak: ${record['high']:.2f})")
                         
                         # EXECUTE CLOSE
                         side = "SELL" if size > 0 else "BUY"
-                        # We use abs(size) to ensure positive number
                         if hands.place_market_order(coin, side, abs(size)):
-                            events.append(f"🛡️ {coin}: PROTECTED @ ${pnl:.2f}")
-                            # Remove from monitored list since it's closed
-                            if coin in self.secured_coins: self.secured_coins.remove(coin)
-                
-                # CASE B: COIN IS NOT SECURED YET (Waiting for profit)
+                            events.append(f"💰 {coin}: BANKED @ ${pnl:.2f} (Peak ${record['high']:.2f})")
+                            # Remove from ward immediately
+                            del self.trauma_ward[coin]
+
+                # CASE B: NOT SECURED YET (Waiting for Trigger)
                 else:
                     if pnl >= trigger_val:
-                        self.secured_coins.append(coin)
+                        # INITIALIZE TRAUMA RECORD
+                        self.trauma_ward[coin] = {
+                            'high': pnl,
+                            'stop': self.initial_guard # Starts at $0.05
+                        }
                         events.append(f"🔒 {coin}: SECURED (>${trigger_val})")
 
             except Exception as e:
@@ -66,4 +81,5 @@ class DeepSea:
 
     @property
     def secured_list(self):
-        return self.secured_coins
+        # Returns just the names for the dashboard to display the Lock Icon
+        return list(self.trauma_ward.keys())
