@@ -8,7 +8,7 @@ from config import conf
 
 warnings.simplefilter("ignore")
 
-# TIER: RAILWAY CLOUD COMMANDER (DIAGNOSTIC MODE)
+# TIER: RAILWAY CLOUD COMMANDER (STABILITY PATCHED)
 ANCHOR_FILE = conf.get_path("equity_anchor.json")
 BTC_TICKER = "BTC"
 SESSION_START_TIME = time.time()
@@ -36,8 +36,7 @@ def load_anchor(current_equity):
             with open(ANCHOR_FILE, 'w') as f:
                 json.dump({"start_equity": current_equity}, f)
             return current_equity
-    except:
-        return current_equity
+    except: return current_equity
 
 def normalize_positions(raw_positions):
     clean_pos = []
@@ -84,12 +83,10 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", ses
                 entry = p['entry']
                 pnl_val = p['pnl']
                 side = "LONG" if size > 0 else "SHORT"
-                
                 lev = FLEET_CONFIG.get(coin, {}).get('lev', 10)
                 margin = (abs(size) * entry) / lev
                 roe = 0.0
                 if margin > 0: roe = (pnl_val / margin) * 100
-                
                 is_secured = coin in secured_list
                 icon = "🔒" if is_secured else "" 
                 pos_lines.append(f"{coin}|{side}|{pnl_val:.2f}|{roe:.1f}|{icon}")
@@ -113,10 +110,8 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", ses
             "session": session_name,
             "updated": time.time()
         }
-        
         with open(conf.get_path("dashboard_state.json"), "w") as f: 
             json.dump(data, f, ensure_ascii=False)
-            
     except Exception as e: pass
 
 try:
@@ -152,17 +147,17 @@ except Exception as e:
 
 def main_loop():
     global STARTING_EQUITY, RADAR_CACHE
-    
     print("🦅 LUMA CLOUD COMMANDER ONLINE")
+    
     try:
         address = conf.wallet_address
-        msg.send("info", "🦅 **LUMA CLOUD:** Diagnostics Active.")
+        msg.send("info", "🦅 **LUMA CLOUD:** Memory Patch Active.")
         
+        # Init Leverage
         for coin, rules in FLEET_CONFIG.items():
-            try:
-                hands.set_leverage_all([coin], leverage=rules['lev'])
-                time.sleep(0.2) 
+            try: hands.set_leverage_all([coin], leverage=rules['lev'])
             except: pass
+            time.sleep(0.2) 
 
         last_history_check = 0
         cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}
@@ -172,6 +167,7 @@ def main_loop():
             session_data = chronos.get_session()
             session_name = session_data['name']
             
+            # --- HISTORY DATA ---
             if time.time() - last_history_check > 14400: 
                 try:
                     btc_daily = vision.get_candles(BTC_TICKER, "1d")
@@ -181,10 +177,12 @@ def main_loop():
                 except: pass
             history_data = cached_history_data
             
+            # --- FETCH USER STATE ---
             equity = 0.0
             cash = 0.0
             clean_positions = []
             open_orders = [] 
+            data_fetched = False # <--- THE FIX
             
             try:
                 user_state = vision.get_user_state(address)
@@ -193,12 +191,18 @@ def main_loop():
                     cash = float(user_state.get('withdrawable', 0))
                     clean_positions = normalize_positions(user_state.get('assetPositions', []))
                     open_orders = user_state.get('openOrders', [])
-            except: pass
+                    data_fetched = True # <--- MARK AS SUCCESS
+            except Exception as e:
+                # If network fails, we keep data_fetched = False
+                # This prevents us from wiping memory
+                pass
             
+            # Anchor Logic
             if STARTING_EQUITY == 0.0 and equity > 0:
                 STARTING_EQUITY = load_anchor(equity)
             current_pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
             
+            # Risk Mode
             risk_mode = "AGGRESSIVE"
             investable_pct = 0.60 
             if current_pnl > 5.00:
@@ -209,32 +213,35 @@ def main_loop():
             prince_margin_target = total_investable_cash * 0.25
             meme_margin_target = total_investable_cash * 0.1666
             
-            # Use property name 'secured_coins' to prevent crash
+            # Secured Coins
             secured = ratchet.secured_coins
 
+            # Dashboard Update
             status_msg = f"Scanning... Mode:{risk_mode}"
             update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured)
             print(f">> [{time.strftime('%H:%M:%S')}] Pulse Check: OK", end='\r')
 
+            # Financial Report
             if time.time() - last_finance_report > 3600:
                 try:
                     msg.notify_financial(equity, current_pnl, len(clean_positions), risk_mode)
                     last_finance_report = time.time()
                 except: pass
 
+            # --- TRADING LOOP ---
             for coin, rules in FLEET_CONFIG.items():
-                ratchet.check_trauma(hands, coin)
                 
+                # Check for existing/pending
                 existing = next((p for p in clean_positions if p['coin'] == coin), None)
                 pending = next((o for o in open_orders if o.get('coin') == coin), None)
                 
+                # Update Radar
                 try: candles = vision.get_candles(coin, "1h") 
                 except: candles = []
                 
                 if candles:
                     curr_p = float(candles[-1]['c'])
                     formatted_p = f"${curr_p:.4f}"
-                    
                     if existing:
                         RADAR_CACHE[coin] = {"price": formatted_p, "status": "ACTIVE TRADE", "color": "blue"}
                     elif pending:
@@ -247,6 +254,7 @@ def main_loop():
 
                 if existing or pending: continue 
 
+                # --- ENTRY LOGIC (Only runs if no trade) ---
                 micro_season = season.get_multiplier(rules['type'])
                 macro_mult = session_data['aggression'] * history_data['multiplier']
                 total_mult = macro_mult * micro_season['mult']
@@ -273,8 +281,6 @@ def main_loop():
                                 log = f"{coin}: {sm_signal['type']} ({risk_mode})"
                                 update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=log)
                                 msg.notify_trade(coin, f"TRAP_{side}", sm_signal['price'], final_size)
-                            else:
-                                update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=f"❌ {coin}: TRAP FAILED")
                 
                 elif xeno.hunt(coin, candles) == "ATTACK":
                     if predator_signal == "REAL_PUMP" or predator_signal is None:
@@ -282,29 +288,23 @@ def main_loop():
                         else:
                             if oracle.consult(coin, "BREAKOUT_BUY", "Market", context_str):
                                 coin_size = final_size / float(candles[-1]['c'])
-                                
-                                # --- MARKET BUY EXECUTION & DIAGNOSTICS ---
-                                # result is True OR an error string
                                 result = hands.place_market_order(coin, "BUY", coin_size)
-                                
                                 if result is True:
                                     log = f"{coin}: MARKET BUY ({risk_mode})"
                                     update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=log)
                                     msg.notify_trade(coin, "MARKET_BUY", "Market", final_size)
                                 else:
-                                    # PARSE ERROR FOR DISPLAY
-                                    err_msg = str(result)
-                                    if "Insufficient Margin" in err_msg: short_err = "NO MARGIN"
-                                    elif "Invalid Size" in err_msg: short_err = "BAD SIZE"
-                                    else: short_err = "REJECTED" # Will verify in logs
-                                    
-                                    err_log = f"❌ {coin}: {short_err}"
-                                    update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=err_log)
+                                    update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=f"❌ {coin}: {str(result)}")
 
-            ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
-            if ratchet_events:
-                for event in ratchet_events:
-                     update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=event)
+            # --- CRITICAL FIX: MEMORY PROTECTION ---
+            # Only run the Ratchet if we successfully fetched fresh data.
+            # If the network failed (data_fetched=False), we SKIP this block.
+            # This prevents the bot from wiping memory when it sees an empty list due to error.
+            if data_fetched:
+                ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
+                if ratchet_events:
+                    for event in ratchet_events:
+                         update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=event)
             
             time.sleep(3) 
             
