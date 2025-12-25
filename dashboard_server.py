@@ -6,8 +6,8 @@ import json
 # Railway provides the PORT variable. Defaults to 8080.
 PORT = int(os.environ.get("PORT", 8080))
 
-# We look for the file in the current directory or 'data' folder
-# This bypasses the need to import the 'config' module
+# We look for the data file in likely locations.
+# This bypasses the need to import the potentially broken 'config' module.
 DATA_FILES = ["dashboard_state.json", "data/dashboard_state.json"]
 
 class DashboardHandler(http.server.SimpleHTTPRequestHandler):
@@ -18,9 +18,9 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             
-            content = b'{"status": "WAITING FOR BOT...", "equity": "---"}'
+            content = b'{"status": "BOOTING...", "equity": "---"}'
             
-            # Try to find the file without crashing
+            # Try to find the file safely. If missing, we don't crash.
             for path in DATA_FILES:
                 if os.path.exists(path):
                     try:
@@ -36,10 +36,10 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 super().do_GET()
             else:
                 self.send_response(200)
-                self.wfile.write(b"LUMA DASHBOARD: ONLINE")
+                self.wfile.write(b"🦅 LUMA DASHBOARD: ONLINE")
 
 if __name__ == "__main__":
-    print(f"🦅 DASHBOARD STANDALONE LISTENING ON {PORT}")
+    print(f"🦅 DASHBOARD STANDALONE LISTENING ON PORT {PORT}")
     socketserver.TCPServer.allow_reuse_address = True
     try:
         with socketserver.TCPServer(("", PORT), DashboardHandler) as httpd:
