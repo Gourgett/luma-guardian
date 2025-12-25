@@ -6,5 +6,5 @@ python3 dashboard_server.py &
 # 2. Wait 2 seconds to ensure port is open
 sleep 2
 
-# 3. Start the Trading Bot (If this crashes, the server stays alive)
+# 3. Start the Trading Bot in the foreground (If this crashes, the server stays alive)
 python3 main.py
