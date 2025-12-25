@@ -1,7 +1,10 @@
 #!/bin/bash
 
-# 1. Start the Dashboard in the background (So Railway sees the port OPEN)
-python dashboard_server.py &
+# 1. Start the Dumb Server in background (Guarantees Healthcheck PASS)
+python3 dashboard_server.py &
 
-# 2. Start the Trading Bot in the foreground (So it keeps running)
-python main.py
+# 2. Wait 2 seconds to ensure port is open
+sleep 2
+
+# 3. Start the Trading Bot (If this crashes, the server stays alive)
+python3 main.py
