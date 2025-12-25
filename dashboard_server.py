@@ -3,11 +3,11 @@ import socketserver
 import os
 import json
 
-# Railway automatically provides the PORT. Defaults to 8080.
+# Railway provides the PORT variable. Defaults to 8080.
 PORT = int(os.environ.get("PORT", 8080))
 
 # We look for the file in the current directory or 'data' folder
-# This matches where main.py writes it.
+# This bypasses the need to import the 'config' module
 DATA_FILES = ["dashboard_state.json", "data/dashboard_state.json"]
 
 class DashboardHandler(http.server.SimpleHTTPRequestHandler):
@@ -36,7 +36,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 super().do_GET()
             else:
                 self.send_response(200)
-                self.wfile.write(b"🦅 LUMA DASHBOARD: ONLINE")
+                self.wfile.write(b"LUMA DASHBOARD: ONLINE")
 
 if __name__ == "__main__":
     print(f"🦅 DASHBOARD STANDALONE LISTENING ON {PORT}")
