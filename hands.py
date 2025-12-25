@@ -8,8 +8,8 @@ from config import conf
 
 class Hands:
     def __init__(self):
-        # DAY ONE ARCHITECTURE: Connect immediately on startup.
-        print(">> HANDS: Connecting to Exchange...")
+        # DAY ONE LOGIC: Aggressive, immediate connection.
+        print(">> HANDS: Initializing Link...")
         try:
             self.account = eth_account.Account.from_key(conf.private_key)
             self.info = Info(conf.base_url, skip_ws=True)
@@ -18,24 +18,24 @@ class Hands:
             # Load Universe for precision rules
             self.meta = self.info.meta()
             self.coin_rules = {a['name']: a['szDecimals'] for a in self.meta['universe']}
-            print(f">> HANDS: CONNECTED. Loaded {len(self.coin_rules)} assets.")
+            print(f">> HANDS: ONLINE. Loaded {len(self.coin_rules)} assets.")
         except Exception as e:
-            print(f"xx HANDS CONNECTION FAILED: {e}")
-            self.exchange = None
+            # If this fails, we want to know immediately.
+            print(f"xx HANDS FATAL ERROR: {e}")
+            raise e
 
     def set_leverage_all(self, coins, leverage):
-        if not self.exchange: return
+        # Aggressive leverage setting
         for coin in coins:
             try:
                 self.exchange.update_leverage(leverage, coin)
-                print(f">> LEVERAGE: Set {coin} to {leverage}x")
+                print(f">> LEVERAGE: {coin} -> {leverage}x")
             except: pass
 
     def _get_precise_size(self, coin, size):
-        # The ONLY patch we keep: kPEPE Integer Fix
+        # The Critical Integer Fix (Required for API acceptance)
         try:
             decimals = self.coin_rules.get(coin, 2)
-            # Force integers for these known meme coins
             if coin in ['kPEPE', 'WIF', 'PEPE', 'BONK', 'SHIB']: 
                 decimals = 0
             
@@ -46,14 +46,12 @@ class Hands:
             return int(size)
 
     def cancel_active_orders(self, coin):
-        if not self.exchange: return False
         try:
             self.exchange.cancel_all_orders(coin)
             return True
         except: return False
 
     def place_market_order(self, coin, side, size):
-        if not self.exchange: return False
         try:
             final_size = self._get_precise_size(coin, size)
             is_buy = (side == "BUY")
@@ -71,7 +69,6 @@ class Hands:
             return False
 
     def place_trap(self, coin, side, price, size_usd):
-        if not self.exchange: return False
         try:
             is_buy = (side == "BUY")
             raw_size = size_usd / float(price)
