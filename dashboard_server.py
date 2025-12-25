@@ -3,9 +3,12 @@ import socketserver
 import os
 import json
 
-# Railway automatically provides the PORT
+# Railway automatically provides the PORT. Defaults to 8080.
 PORT = int(os.environ.get("PORT", 8080))
-DATA_FILE = "data/dashboard_state.json"
+
+# We look for the file in the current directory or 'data' folder
+# This matches where main.py writes it.
+DATA_FILES = ["dashboard_state.json", "data/dashboard_state.json"]
 
 class DashboardHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
@@ -15,19 +18,31 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             
-            # Simple file read. No logic. No imports.
-            if os.path.exists(DATA_FILE):
-                with open(DATA_FILE, "r") as f:
-                    self.wfile.write(f.read().encode())
-            else:
-                # If the bot hasn't written the file yet, we stay calm.
-                self.wfile.write(b'{"status": "WAITING FOR BOT...", "equity": "---"}')
+            content = b'{"status": "WAITING FOR BOT...", "equity": "---"}'
+            
+            # Try to find the file without crashing
+            for path in DATA_FILES:
+                if os.path.exists(path):
+                    try:
+                        with open(path, "rb") as f:
+                            content = f.read()
+                        break
+                    except: pass
+            
+            self.wfile.write(content)
         else:
-            super().do_GET()
+            # Serve index.html if it exists, otherwise just say "Online"
+            if os.path.exists("index.html"):
+                super().do_GET()
+            else:
+                self.send_response(200)
+                self.wfile.write(b"🦅 LUMA DASHBOARD: ONLINE")
 
 if __name__ == "__main__":
-    print(f"🦅 DASHBOARD LIVE ON PORT {PORT}")
-    # Allow the port to be reused immediately if the server restarts
+    print(f"🦅 DASHBOARD STANDALONE LISTENING ON {PORT}")
     socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("", PORT), DashboardHandler) as httpd:
-        httpd.serve_forever()
+    try:
+        with socketserver.TCPServer(("", PORT), DashboardHandler) as httpd:
+            httpd.serve_forever()
+    except Exception as e:
+        print(f"xx SERVER CRASH: {e}")
