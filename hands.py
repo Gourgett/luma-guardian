@@ -8,7 +8,6 @@ from config import conf
 
 class Hands:
     def __init__(self):
-        # FAST INIT: Don't connect yet. Just set up the class.
         self.exchange = None
         self.info = None
         self.manual_overrides = {'kPEPE': 0, 'WIF': 0, 'PEPE': 0, 'BONK': 0}
@@ -19,7 +18,6 @@ class Hands:
             self.account = eth_account.Account.from_key(conf.private_key)
             self.info = Info(conf.base_url, skip_ws=True)
             self.exchange = Exchange(self.account, conf.base_url, self.account.address)
-            # Try to fetch precision rules, default to 2 if fails
             try:
                 self.meta = self.info.meta()
                 self.coin_rules = {a['name']: a['szDecimals'] for a in self.meta['universe']}
@@ -36,17 +34,13 @@ class Hands:
         return True
 
     def _get_precise_size(self, coin, size):
-        # 1. Check Overrides (kPEPE Fix)
         if coin in self.manual_overrides: return int(size)
-        
-        # 2. Check Exchange Rules
         try:
             decimals = self.coin_rules.get(coin, 2)
             if decimals == 0: return int(size)
             factor = 10 ** decimals
             return math.floor(size * factor) / factor
-        except:
-            return int(size)
+        except: return int(size)
 
     def set_leverage_all(self, coins, leverage):
         if not self._ensure_connection(): return
