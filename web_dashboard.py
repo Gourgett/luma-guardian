@@ -22,8 +22,8 @@ HTML_TEMPLATE = """
         .header { font-size: 1.2em; font-weight: bold; border-bottom: 1px solid #30363d; padding-bottom: 10px; margin-bottom: 10px; }
         table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
         th, td { text-align: left; padding: 8px; border-bottom: 1px solid #21262d; }
-        .log { font-size: 0.8em; opacity: 0.8; height: 350px; overflow-y: scroll; border: 1px solid #21262d; padding: 5px; }
-        .ticker { font-size: 0.9em; color: #8b949e; border: 1px dashed #30363d; padding: 5px; margin-bottom: 10px; }
+        .log { font-size: 0.8em; opacity: 0.9; height: 350px; overflow-y: scroll; border: 1px solid #21262d; padding: 5px; }
+        .ticker { font-size: 0.9em; color: #8b949e; border: 1px dashed #30363d; padding: 8px; margin-bottom: 20px; background-color: #0d1117; }
         a { color: inherit; text-decoration: none; border-bottom: 1px dotted #8b949e; }
         a:hover { color: #58a6ff; border-bottom: 1px solid #58a6ff; }
     </style>
@@ -32,17 +32,14 @@ HTML_TEMPLATE = """
     <div class="card">
         <div class="header">🦅 LUMA GUARDIAN [MEME FLEET]</div>
         <div id="status" style="font-size: 0.9em; margin-bottom: 10px;">CONNECTING...</div>
-        
         <div style="margin-top: 10px; display: flex; justify-content: space-between;">
             <div>EQUITY: <span id="equity" class="green">---</span></div>
             <div>CASH: <span id="cash">---</span></div>
         </div>
-        
         <div style="margin-top: 5px; display: flex; justify-content: space-between;">
             <div>PNL: <span id="pnl">---</span></div>
             <div>WIN RATE: <span id="winrate" class="gold">---</span></div>
         </div>
-        
         <div style="margin-top: 5px; text-align: right; color: #8b949e; font-size: 0.9em;">
             MODE: <span id="mode" style="color:#c9d1d9;">---</span> | SESSION: <span id="session">---</span>
         </div>
@@ -58,15 +55,11 @@ HTML_TEMPLATE = """
     </div>
 
     <div class="card">
-        <div class="header">📜 MARKET LOGS (LAST 60)</div>
-        
-        <div class="ticker">
-            🤖 ACTIVITY: <span id="activity" class="cyan">Initializing...</span>
-        </div>
+        <div class="header">🤖 SYSTEM ACTIVITY</div>
+        <div class="ticker"><span id="activity" class="cyan">Initializing...</span></div>
 
-        <div id="logs" class="log">
-             <div style="padding:10px; text-align:center;">Waiting for trades...</div>
-        </div>
+        <div class="header">📜 CLOSED TRANSACTIONS (PERFORMANCE)</div>
+        <div id="logs" class="log"><div style="padding:10px; text-align:center;">Waiting for closed trades...</div></div>
     </div>
 
     <script>
@@ -84,10 +77,10 @@ HTML_TEMPLATE = """
             document.getElementById('mode').innerText = data.mode;
             document.getElementById('session').innerText = data.session || "WAITING";
             
-            // Live Activity Ticker
+            // Mapping 'live_activity' string from main.py
             document.getElementById('activity').innerText = data.live_activity || "Idle";
 
-            // Positions Table
+            // Mapping 'positions' string from main.py
             let tbody = document.querySelector("#pos-table tbody");
             tbody.innerHTML = "";
             if (data.positions && data.positions !== "NO_TRADES") {
@@ -109,7 +102,7 @@ HTML_TEMPLATE = """
                 document.getElementById('risk-report').innerText = data.risk_report.replace(/::/g, " | ");
             }
 
-            // Trade History Logs
+            // Mapping 'trade_history' string from main.py
             let logDiv = document.getElementById('logs');
             if (data.trade_history) {
                 logDiv.innerHTML = data.trade_history.split("||").reverse().join("<br>");
@@ -118,24 +111,3 @@ HTML_TEMPLATE = """
     </script>
 </body>
 </html>
-"""
-
-@app.route('/')
-def index():
-    return render_template_string(HTML_TEMPLATE)
-
-@app.route('/data')
-def data():
-    try:
-        with open("dashboard_state.json", "r") as f:
-            return jsonify(json.load(f))
-    except:
-        return jsonify({"status": "BOOTING...", "equity": "0.00", "cash": "0.00", "pnl": "0.00"})
-
-@app.route('/health')
-def health():
-    return jsonify({"status": "healthy"})
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
