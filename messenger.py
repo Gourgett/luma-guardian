@@ -1,9 +1,6 @@
 import json
 import os
 import time
-# We use standard requests or curl if strictly standard libs,
-# but for Termux 'requests' is usually standard or easily added.
-# If requests is missing, we use a subprocess curl for 100% compatibility.
 import subprocess
 
 class Messenger:
@@ -13,6 +10,17 @@ class Messenger:
         self.webhooks = self._load_webhooks()
 
     def _load_webhooks(self):
+        # 1. Try Env Vars (Railway)
+        webhooks = {
+            "info": os.environ.get("WEBHOOK_INFO"),
+            "trades": os.environ.get("WEBHOOK_TRADES"),
+            "errors": os.environ.get("WEBHOOK_ERRORS")
+        }
+        # If any found, return them
+        if any(webhooks.values()):
+            return webhooks
+
+        # 2. Fallback to file
         try:
             with open(self.config_file, 'r') as f:
                 cfg = json.load(f)
@@ -20,15 +28,11 @@ class Messenger:
         except: return {}
 
     def send(self, channel, message):
-        # channel: "info", "trades", or "errors"
         url = self.webhooks.get(channel)
         if not url: return
         
-        # Payload
         data = {"content": message}
-
         try:
-            # Using curl is safer on Termux than assuming 'requests' library exists
             subprocess.Popen([
                 "curl", "-H", "Content-Type: application/json",
                 "-d", json.dumps(data),
