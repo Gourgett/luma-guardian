@@ -26,8 +26,8 @@ class Xenomorph:
             rsi = self._calculate_rsi(closes, 14)
 
             # DEFINE LIMITS
-            # Memes are allowed to run 'Hotter' than Princes.
-            meme_coins = ["WIF", "DOGE", "PENGU", "PEPE", "SHIB"]
+            # UPDATED: Added SPX, BRETT, POPCAT to the registry
+            meme_coins = ["WIF", "DOGE", "PENGU", "PEPE", "SHIB", "SPX", "BRETT", "POPCAT"]
             
             if coin in meme_coins:
                 rsi_limit = 85  # Memes can go up to 85 before we call it "Unsafe"
@@ -60,9 +60,11 @@ class Xenomorph:
 
     def _calculate_rsi(self, prices, period=14):
         try:
+            if len(prices) < period + 1: return 50
             deltas = [prices[i+1] - prices[i] for i in range(len(prices)-1)]
             gains = [d for d in deltas if d > 0]
             losses = [abs(d) for d in deltas if d < 0]
+            
             if len(gains) == 0: return 0
             if len(losses) == 0: return 100
             
