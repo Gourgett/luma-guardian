@@ -1,80 +1,111 @@
 import json
 import time
+import os
 import math
-import eth_account
-from hyperliquid.exchange import Exchange
+from eth_account import Account
 from hyperliquid.info import Info
-from config import conf
+from hyperliquid.exchange import Exchange
+from hyperliquid.utils import constants
 
 class Hands:
     def __init__(self):
-        # DAY ONE LOGIC: Aggressive, immediate connection.
-        print(">> HANDS: Initializing Link...")
+        print(">> HANDS ARMED: Exchange Connected")
+        self.config = self._load_config()
+        
+        # Priority: Railway Env Var -> server_config.json
+        key = os.environ.get("PRIVATE_KEY") or self.config.get('private_key') or self.config.get('secret_key')
+        
+        if not key:
+            raise ValueError("CRITICAL: No 'PRIVATE_KEY' found in Environment Variables or config file.")
+
+        self.account = Account.from_key(key)
+        self.address = os.environ.get("WALLET_ADDRESS") or self.config.get('wallet_address')
+        
+        self.info = Info(constants.MAINNET_API_URL, skip_ws=True)
+        self.exchange = Exchange(self.account, constants.MAINNET_API_URL)
+
+    def _load_config(self):
+        # Fallback for local testing, otherwise empty
         try:
-            self.account = eth_account.Account.from_key(conf.private_key)
-            self.info = Info(conf.base_url, skip_ws=True)
-            self.exchange = Exchange(self.account, conf.base_url, self.account.address)
-            
-            # Load Universe for precision rules
-            self.meta = self.info.meta()
-            self.coin_rules = {a['name']: a['szDecimals'] for a in self.meta['universe']}
-            print(f">> HANDS: ONLINE. Loaded {len(self.coin_rules)} assets.")
-        except Exception as e:
-            # If this fails, we want to know immediately.
-            print(f"xx HANDS FATAL ERROR: {e}")
-            raise e
+            with open("server_config.json") as f:
+                return json.load(f)
+        except: return {}
 
     def set_leverage_all(self, coins, leverage):
-        # Aggressive leverage setting
+        print(f">> HANDS: Enforcing {leverage}x Leverage on Fleet...")
         for coin in coins:
             try:
                 self.exchange.update_leverage(leverage, coin)
-                print(f">> LEVERAGE: {coin} -> {leverage}x")
             except: pass
+        print(">> HANDS: Leverage Synced.")
 
-    def _get_precise_size(self, coin, size):
-        # The Critical Integer Fix (Required for API acceptance)
+    def cancel_all_orders(self, coin):
         try:
-            decimals = self.coin_rules.get(coin, 2)
-            if coin in ['kPEPE', 'WIF', 'PEPE', 'BONK', 'SHIB']: 
-                decimals = 0
-            
-            if decimals == 0: return int(size)
-            factor = 10 ** decimals
-            return math.floor(size * factor) / factor
-        except:
-            return int(size)
-
-    def cancel_active_orders(self, coin):
-        try:
-            self.exchange.cancel_all_orders(coin)
-            return True
-        except: return False
-
-    def place_market_order(self, coin, side, size):
-        try:
-            final_size = self._get_precise_size(coin, size)
-            is_buy = (side == "BUY")
-            
-            print(f">> EXEC {coin} {side} {final_size}...")
-            result = self.exchange.market_open(coin, is_buy, final_size, None, 0.05)
-            
-            if result['status'] == 'ok':
-                return True
-            else:
-                print(f"xx REJECT: {result}")
-                return False
+            open_orders = self.info.open_orders(self.address)
+            for order in open_orders:
+                if order['coin'] == coin:
+                    print(f"🧹 SWEEPING: Canceling old order for {coin}")
+                    self.exchange.cancel(coin, order['oid'])
+                    time.sleep(0.5)
         except Exception as e:
-            print(f"xx EXEC ERROR: {e}")
-            return False
+            print(f"xx CLEANUP FAILED: {e}")
+
+    def _get_precision(self, coin):
+        # MAP: Matches your successful Trade History exactly.
+        # Format: (Price Decimals, Size Decimals)
+        
+        # PRINCES
+        if coin == "SOL":   return (2, 2)
+        if coin == "SUI":   return (4, 1)
+        if coin == "BTC":   return (1, 3)
+        if coin == "ETH":   return (2, 3)
+
+        # MEMES
+        if coin == "kPEPE": return (6, 0)
+        if coin == "WIF":   return (4, 1)
+        if coin == "DOGE":  return (5, 0)
+        if coin == "PENGU": return (5, 0)
+        
+        # Default Fallback
+        return (4, 1)
 
     def place_trap(self, coin, side, price, size_usd):
+        self.cancel_all_orders(coin)
+        px_prec, sz_prec = self._get_precision(coin)
+        final_price = round(price, px_prec)
+
+        raw_size = size_usd / final_price
+        if sz_prec == 0:
+            final_size = int(raw_size)
+        else:
+            final_size = round(raw_size, sz_prec)
+
+        if final_size == 0:
+            print(f"xx SIZE TOO SMALL: {size_usd} -> 0 {coin}")
+            return
+
+        print(f">> SETTING TRAP: {side} {coin} @ ${final_price} (Size: {final_size})")
+
         try:
-            is_buy = (side == "BUY")
-            raw_size = size_usd / float(price)
-            final_size = self._get_precise_size(coin, raw_size)
-            final_price = float(f"{float(price):.5g}")
+            is_buy = True if side == "BUY" else False
+            result = self.exchange.order(coin, is_buy, final_size, final_price, {"limit": {"tif": "Gtc"}})
+            if result['status'] == 'err':
+                print(f"xx EXCHANGE REJECTED: {result['response']}")
+        except Exception as e:
+            print(f"xx ORDER REJECTED (SDK): {e}")
+
+    def place_market_order(self, coin, side, size_coins):
+        is_buy = True if side == "BUY" else False
+        try:
+            _, sz_prec = self._get_precision(coin)
+            if sz_prec == 0: sz = int(size_coins)
+            else: sz = round(float(size_coins), sz_prec)
             
-            self.exchange.order(coin, is_buy, final_size, final_price, {"limit": {"tif": "Gtc"}})
-            return True
-        except: return False
+            if sz == 0: return
+            print(f"⚡ CASTING SPELL: MARKET {side} {sz} {coin}")
+            self.exchange.market_open(coin, is_buy, sz)
+        except Exception as e:
+            print(f"xx MARKET EXECUTION FAILED: {e}")
+
+    def place_stop(self, coin, price):
+        pass
