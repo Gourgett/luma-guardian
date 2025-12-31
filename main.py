@@ -9,7 +9,6 @@ warnings.simplefilter("ignore")
 
 # ==============================================================================
 #  LUMA SINGULARITY [TIER: OFF HIERARCHY + MEME PRESERVATION]
-#  Logic: Princes Filtered (Strict) | Memes Untouched (Standard)
 # ==============================================================================
 
 CONFIG_FILE = "server_config.json"
@@ -168,9 +167,11 @@ def main_loop():
     try:
         update_heartbeat("BOOTING")
         
-        # Priority: Railway Env Var -> config file
+        # Priority: Railway Env Var
         address = os.environ.get("WALLET_ADDRESS")
+        
         if not address:
+            # Fallback to file for local
             try:
                 cfg = json.load(open(CONFIG_FILE))
                 address = cfg.get('wallet_address')
@@ -291,17 +292,14 @@ def main_loop():
 
                 # --- A. SNIPER (MOMENTUM) ---
                 if xeno_signal == "ATTACK":
-                    # BRANCH 1: OFFS (Strict Filter + Trap)
                     if rules['type'] == "OFF":
                         continue
-                    
-                    # BRANCH 2: MEMES
                     else:
                         if trend_status == "REAL_PUMP" or trend_status is None:
                             proposal = {
                                 "source": "SNIPER",
                                 "side": "BUY",
-                                "price": current_price * 0.999, # Market Buy
+                                "price": current_price * 0.999,
                                 "reason": "MOMENTUM_CONFIRMED"
                             }
 
