@@ -50,14 +50,33 @@ class Hands:
             print(f"xx CLEANUP FAILED: {e}")
 
     def _get_precision(self, coin):
+        # --- PRINCES (Legacy/Safety) ---
         if coin == "SOL":   return (2, 2)
         if coin == "SUI":   return (4, 1)
         if coin == "BTC":   return (1, 3)
         if coin == "ETH":   return (2, 3)
-        if coin == "kPEPE": return (6, 0)
-        if coin == "WIF":   return (4, 1)
-        if coin == "DOGE":  return (5, 0)
-        if coin == "PENGU": return (5, 0)
+
+        # --- MEME FLEET (The 6 Fighters) ---
+        
+        # 1. WIF ($3.00 range) -> Standard
+        if coin == "WIF":    return (4, 1)
+        
+        # 2. DOGE ($0.20 range) -> Integer Size usually safer
+        if coin == "DOGE":   return (5, 0)
+        
+        # 3. PENGU ($0.05 range) -> Integer Size
+        if coin == "PENGU":  return (5, 0)
+        
+        # 4. POPCAT ($1.00 range) -> Similar to WIF
+        if coin == "POPCAT": return (4, 1)
+        
+        # 5. BRETT ($0.10 range) -> Similar to DOGE
+        if coin == "BRETT":  return (5, 0)
+        
+        # 6. SPX ($0.50 range) -> Similar to WIF
+        if coin == "SPX":    return (4, 1)
+        
+        # Default Fallback
         return (4, 1)
 
     def place_trap(self, coin, side, price, size_usd):
