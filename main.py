@@ -18,22 +18,17 @@ BTC_TICKER = "BTC"
 
 # --- THE STRUCTURAL FLEET (6-PACK) ---
 FLEET_CONFIG = {
-    # THE VETERANS
     "WIF":    {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
     "DOGE":   {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
     "PENGU":  {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
-
-    # THE REINFORCEMENTS (Structural Beta)
     "POPCAT": {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
     "BRETT":  {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
     "SPX":    {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06}
 }
 
 STARTING_EQUITY = 0.0
-# LOG MEMORY: 60 Events
 EVENT_QUEUE = deque(maxlen=60)
 
-# DAILY STATS CONTAINER
 DAILY_STATS = {
     "wins": 0,
     "total": 0,
@@ -62,7 +57,6 @@ def update_heartbeat(status="ALIVE"):
     except: pass
 
 def check_daily_reset():
-    """Resets win rate counter at midnight UTC"""
     global DAILY_STATS
     current_day = datetime.now(timezone.utc).day
     if current_day != DAILY_STATS["last_reset_day"]:
@@ -71,7 +65,6 @@ def check_daily_reset():
     return False
 
 def update_stats(pnl_value):
-    """Updates the win/loss counter based on closed trade PnL"""
     global DAILY_STATS
     DAILY_STATS["total"] += 1
     if pnl_value > 0:
@@ -103,7 +96,6 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
 
         if new_event:
             t_str = time.strftime("[%H:%M:%S]")
-            # Prevent double timestamps
             if not new_event.startswith("["):
                 final_msg = f"{t_str} {new_event}"
             else:
@@ -114,7 +106,6 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
         pos_str = "NO_TRADES"
         risk_report = []
 
-        # Win Rate Calculation
         win_rate = 0
         if DAILY_STATS["total"] > 0:
             win_rate = int((DAILY_STATS["wins"] / DAILY_STATS["total"]) * 100)
@@ -223,7 +214,7 @@ def main_loop():
             print("xx CRITICAL: No WALLET_ADDRESS found.")
             return
 
-        msg.send("info", "🦅 **LUMA UPDATE:** MEME FLEET + TITAN MODE (12% THRESHOLD).")
+        msg.send("info", "🦅 **LUMA UPDATE:** TITAN & SHIELD MODES (BOTH USE 95% FILTER).")
         last_history_check = 0
         cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}
         leverage_memory = {}
@@ -233,7 +224,6 @@ def main_loop():
             session_data = chronos.get_session()
             session_name = session_data['name']
             
-            # Daily Reset Check
             if check_daily_reset():
                 update_dashboard(equity, cash, "DAILY RESET", clean_positions, risk_mode, secured, new_event="--- DAILY STATS RESET ---", session=session_name)
 
@@ -267,37 +257,48 @@ def main_loop():
             start_eq_safe = STARTING_EQUITY if STARTING_EQUITY > 0 else 1.0
             current_roe_pct = (current_pnl / start_eq_safe) * 100
 
-            # --- CIRCUIT BREAKER ---
+            # --- CIRCUIT BREAKER (HARD FLOOR) ---
             if equity < 300.0 and equity > 1.0:
                  print("xx CRITICAL: EQUITY BELOW $300. HALTING TRADING.")
                  msg.send("errors", "CRITICAL: HARD FLOOR BREACHED. SHUTTING DOWN.")
                  time.sleep(3600)
                  continue
 
-            # --- SCALABLE STATE MACHINE (TITAN UPGRADE) ---
+            # --- SCALABLE STATE MACHINE ---
             RECOVERY_TARGET = 412.0
-            TITAN_THRESHOLD = 12.0 # Updated to 12% (~$40 profit)
+            TITAN_THRESHOLD = 12.0   # +12% ROE -> Strict Filter
+            SHIELD_THRESHOLD = -10.0 # -10% ROE -> Strict Filter (No longer Halts)
             
             risk_mode = "STANDARD"
             titan_active = False
+            shield_active = False
 
-            # PRIORITY 1: RECOVERY LOCK
-            if equity < RECOVERY_TARGET:
-                risk_mode = "RECOVERY"
-            # PRIORITY 2: GOD MODE
-            elif current_roe_pct >= 5.0:
-                risk_mode = "GOD_MODE"
-            
-            # THE TITAN FILTER (95% Confidence Only)
+            # 1. CHECK DAILY EXTREMES (TITAN or SHIELD)
             if current_roe_pct >= TITAN_THRESHOLD:
                 titan_active = True
                 status_msg = f"Mode:{risk_mode} (TITAN ACTIVE) | ROE:+{current_roe_pct:.2f}%"
+            elif current_roe_pct <= SHIELD_THRESHOLD:
+                shield_active = True
+                # We enforce Recovery Mode leverage if we are in the hole
+                risk_mode = "RECOVERY" 
+                status_msg = f"🛡️ SHIELD ACTIVE (STRICT FILTER) | ROE:{current_roe_pct:.2f}%"
             else:
                 status_msg = f"Mode:{risk_mode} (ROE:{current_roe_pct:.2f}%)"
 
+            # 2. CHECK LEVERAGE/MODE HIERARCHY
+            # Priority: If already in Shield (loss), we are in Recovery mode logic (5x).
+            # If not in Shield, check Equity Floor.
+            if not shield_active:
+                if equity < RECOVERY_TARGET:
+                    risk_mode = "RECOVERY"
+                elif current_roe_pct >= 5.0:
+                    risk_mode = "GOD_MODE"
+                    # If Titan is active, it stays active, but we use God Mode leverage.
+                    if titan_active:
+                        status_msg = f"Mode:GOD_MODE (TITAN ACTIVE) | ROE:+{current_roe_pct:.2f}%"
+
             base_margin_usd = equity * 0.11
             max_margin_usd  = equity * 0.165
-
             secured = ratchet.secured_coins
             update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, session=session_name)
             
@@ -307,13 +308,11 @@ def main_loop():
             for coin, rules in FLEET_CONFIG.items():
                 update_heartbeat("SCANNING")
 
-                # --- 1. SMART LEVERAGE MANAGEMENT ---
+                # --- 1. LEVERAGE SYNC ---
                 target_leverage = rules['lev']
                 if risk_mode == "GOD_MODE" and rules['type'] == "MEME":
                     target_leverage = 10
-                
-                # RECOVERY OVERRIDE (Redundant check to be safe)
-                if risk_mode == "RECOVERY":
+                if risk_mode == "RECOVERY" or shield_active:
                     target_leverage = 5
 
                 if coin in active_coins:
@@ -356,14 +355,14 @@ def main_loop():
                 whale_signal = whale.hunt_turtle(candles) or whale.hunt_ghosts(candles)
                 xeno_signal = xeno.hunt(coin, candles)
 
-                # --- A. SNIPER (MOMENTUM) ---
                 if xeno_signal == "ATTACK":
                     if rules['type'] == "OFF": 
                         continue
                     
-                    # LOGIC: If TITAN is active, we ONLY accept "REAL_PUMP" (95% Conf).
+                    # DUAL STRICT FILTER (Used for both Titan AND Shield)
+                    # If we are Winning Big (Titan) OR Losing Big (Shield), we ONLY accept "REAL_PUMP" (95% Conf).
                     is_valid_sniper = False
-                    if titan_active:
+                    if titan_active or shield_active:
                          if trend_status == "REAL_PUMP": is_valid_sniper = True
                     else:
                          if trend_status == "REAL_PUMP" or trend_status is None: is_valid_sniper = True
@@ -371,8 +370,6 @@ def main_loop():
                     if is_valid_sniper:
                         proposal = {"source": "SNIPER", "side": "BUY", "price": current_price * 0.999, "reason": "MOMENTUM_CONFIRMED"}
 
-                # --- B. WHALE (SMART MONEY) ---
-                # Whale signals are high confidence by default, so we keep them enabled in Titan Mode.
                 if whale_signal:
                     if trend_status != "REAL_PUMP":
                         proposal = {"source": whale_signal['type'], "side": whale_signal['side'], "price": whale_signal['price'], "reason": "REVERSAL_CONFIRMED"}
@@ -394,10 +391,8 @@ def main_loop():
             ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
             if ratchet_events:
                 for event in ratchet_events:
-                    # Win Rate Logic
                     if "PROFIT" in event or "+" in event: update_stats(1)
                     elif "LOSS" in event or "-" in event: update_stats(-1)
-                    
                     update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, new_event=event, session=session_name)
             
             time.sleep(3)
