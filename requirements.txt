@@ -1,7 +1,6 @@
 eth-account
-hyperliquid-python-sdk
 requests
-pandas
-numpy
-colorama
+hyperliquid-python-sdk
 flask
+google-generativeai
+gunicorn
