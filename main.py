@@ -16,7 +16,6 @@ CONFIG_FILE = "server_config.json"
 ANCHOR_FILE = "equity_anchor.json"
 BTC_TICKER = "BTC"
 
-# --- FLEET CONFIG ---
 FLEET_CONFIG = {
     "WIF":   {"type": "MEME",   "lev": 5,  "risk_mult": 1.0, "stop_loss": 0.06},
     "DOGE":  {"type": "MEME",   "lev": 5,  "risk_mult": 1.0, "stop_loss": 0.06},
@@ -168,10 +167,18 @@ def main_loop():
     print("🦅 LUMA SINGULARITY (OFF FILTER ACTIVE)")
     try:
         update_heartbeat("BOOTING")
-        try:
-            cfg = json.load(open(CONFIG_FILE))
-            address = cfg.get('wallet_address')
-        except: return
+        
+        # Priority: Railway Env Var -> config file
+        address = os.environ.get("WALLET_ADDRESS")
+        if not address:
+            try:
+                cfg = json.load(open(CONFIG_FILE))
+                address = cfg.get('wallet_address')
+            except: pass
+        
+        if not address:
+            print("xx CRITICAL: No WALLET_ADDRESS found.")
+            return
 
         msg.send("info", "🦅 **LUMA UPDATE:** MEMES UNTOUCHED. OFF FILTER ACTIVE.")
         last_history_check = 0
