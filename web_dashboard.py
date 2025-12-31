@@ -1,6 +1,7 @@
 from flask import Flask, render_template_string, jsonify
 import json
 import os
+import time
 
 app = Flask(__name__)
 
@@ -34,7 +35,6 @@ HTML_TEMPLATE = """
             background-color: #0d1117;
         }
         
-        /* History is purely for CLOSED trades now */
         .log { 
             font-size: 0.8em; 
             opacity: 0.9; 
@@ -83,15 +83,14 @@ HTML_TEMPLATE = """
             <span id="activity" class="cyan">Initializing...</span>
         </div>
 
-        <div class="header">📜 CLOSED TRANSACTIONS (PERFORMANCE)</div>
+        <div class="header">📜 MARKET LOGS (LAST 60)</div>
         <div id="logs" class="log">
-             <div style="padding:10px; text-align:center;">Waiting for closed trades...</div>
+             <div style="padding:10px; text-align:center;">Waiting for trades...</div>
         </div>
     </div>
 
     <script>
         fetch('/data').then(r => r.json()).then(data => {
-            // --- HEADER DATA ---
             document.getElementById('status').innerText = data.status || "ONLINE";
             document.getElementById('equity').innerText = "$" + data.equity;
             document.getElementById('cash').innerText = "$" + data.cash;
@@ -104,17 +103,11 @@ HTML_TEMPLATE = """
             document.getElementById('winrate').innerText = data.win_rate || "0/0 (0%)";
             document.getElementById('mode').innerText = data.mode;
             document.getElementById('session').innerText = data.session || "WAITING";
-
-            // --- ACTIVITY TICKER (Top Box) ---
-            // If it's a list (from new main.py), show the last item. If string, show string.
-            let actData = data.live_activity || data.activity_log;
-            if (actData && actData.includes("||")) {
-                 // Get the most recent activity line (last item in list)
-                 let parts = actData.split("||");
-                 document.getElementById('activity').innerText = parts[parts.length - 1];
-            } else {
-                 document.getElementById('activity').innerText = actData || "Idle";
-            }
+            
+            // --- ACTIVITY FIX ---
+            // Your main.py sends "live_activity" as a simple string. 
+            // We display it directly. No parsing needed.
+            document.getElementById('activity').innerText = data.live_activity || "Idle";
 
             // --- POSITIONS TABLE ---
             let tbody = document.querySelector("#pos-table tbody");
@@ -138,12 +131,12 @@ HTML_TEMPLATE = """
                 document.getElementById('risk-report').innerText = data.risk_report.replace(/::/g, " | ");
             }
 
-            // --- TRADE HISTORY (Bottom Box) ---
-            // Shows ONLY what main.py puts in 'trade_log' (Closed Trades)
+            // --- TRADE HISTORY ---
+            // Your main.py sends "trade_history" joined by "||". 
+            // We split it to show the list.
             let logDiv = document.getElementById('logs');
-            let tradeData = data.trade_log || data.trade_history;
-            if (tradeData) {
-                logDiv.innerHTML = tradeData.split("||").reverse().join("<br>");
+            if (data.trade_history) {
+                logDiv.innerHTML = data.trade_history.split("||").reverse().join("<br>");
             }
         });
     </script>
