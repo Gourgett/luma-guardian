@@ -11,17 +11,21 @@ HTML_TEMPLATE = """
 <head>
     <title>LUMA COMMAND</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta http-equiv="refresh" content="5">
+    <meta http-equiv="refresh" content="2">
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: monospace; padding: 20px; }
         .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 15px; margin-bottom: 20px; }
         .green { color: #2ea043; }
         .red { color: #da3633; }
         .gold { color: #d29922; }
+        .cyan { color: #58a6ff; }
         .header { font-size: 1.2em; font-weight: bold; border-bottom: 1px solid #30363d; padding-bottom: 10px; margin-bottom: 10px; }
         table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
         th, td { text-align: left; padding: 8px; border-bottom: 1px solid #21262d; }
-        .log { font-size: 0.8em; opacity: 0.8; height: 400px; overflow-y: scroll; border: 1px solid #21262d; padding: 5px; }
+        .log { font-size: 0.8em; opacity: 0.8; height: 350px; overflow-y: scroll; border: 1px solid #21262d; padding: 5px; }
+        .ticker { font-size: 0.9em; color: #8b949e; border: 1px dashed #30363d; padding: 5px; margin-bottom: 10px; }
+        a { color: inherit; text-decoration: none; border-bottom: 1px dotted #8b949e; }
+        a:hover { color: #58a6ff; border-bottom: 1px solid #58a6ff; }
     </style>
 </head>
 <body>
@@ -55,14 +59,18 @@ HTML_TEMPLATE = """
 
     <div class="card">
         <div class="header">📜 MARKET LOGS (LAST 60)</div>
+        
+        <div class="ticker">
+            🤖 ACTIVITY: <span id="activity" class="cyan">Initializing...</span>
+        </div>
+
         <div id="logs" class="log">
-             <div style="padding:10px; text-align:center;">Loading logs...</div>
+             <div style="padding:10px; text-align:center;">Waiting for trades...</div>
         </div>
     </div>
 
     <script>
         fetch('/data').then(r => r.json()).then(data => {
-            // Header Data
             document.getElementById('status').innerText = data.status || "ONLINE";
             document.getElementById('equity').innerText = "$" + data.equity;
             document.getElementById('cash').innerText = "$" + data.cash;
@@ -75,33 +83,36 @@ HTML_TEMPLATE = """
             document.getElementById('winrate').innerText = data.win_rate || "0/0 (0%)";
             document.getElementById('mode').innerText = data.mode;
             document.getElementById('session').innerText = data.session || "WAITING";
+            
+            // Live Activity Ticker
+            document.getElementById('activity').innerText = data.live_activity || "Idle";
 
-            // Live Positions Table
+            // Positions Table
             let tbody = document.querySelector("#pos-table tbody");
             tbody.innerHTML = "";
             if (data.positions && data.positions !== "NO_TRADES") {
                 let rows = data.positions.split("::");
                 rows.forEach(row => {
-                    let parts = row.split("|"); // coin|side|pnl|roe|icon|target
+                    let parts = row.split("|"); 
+                    let coinName = parts[0];
                     let tr = document.createElement("tr");
                     let color = parseFloat(parts[2]) >= 0 ? "green" : "red";
-                    tr.innerHTML = `<td>${parts[4]} ${parts[0]}</td><td>${parts[1]}</td><td class="${color}">$${parts[2]}</td><td class="${color}">${parts[3]}%</td>`;
+                    let link = `<a href="https://app.hyperliquid.xyz/trade/${coinName}" target="_blank">${parts[4]} ${coinName}</a>`;
+                    tr.innerHTML = `<td>${link}</td><td>${parts[1]}</td><td class="${color}">$${parts[2]}</td><td class="${color}">${parts[3]}%</td>`;
                     tbody.appendChild(tr);
                 });
             } else {
                 tbody.innerHTML = "<tr><td colspan='4' style='text-align:center; color:#555;'>NO ACTIVE TRADES</td></tr>";
             }
             
-            // Risk Report Text
             if (data.risk_report) {
                 document.getElementById('risk-report').innerText = data.risk_report.replace(/::/g, " | ");
             }
 
-            // Logs (Reversed so newest is at top)
+            // Trade History Logs
             let logDiv = document.getElementById('logs');
-            if (data.events) {
-                // events are joined by "||"
-                logDiv.innerHTML = data.events.split("||").reverse().join("<br>");
+            if (data.trade_history) {
+                logDiv.innerHTML = data.trade_history.split("||").reverse().join("<br>");
             }
         });
     </script>
