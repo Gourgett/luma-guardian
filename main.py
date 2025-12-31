@@ -4,6 +4,7 @@ import sys
 import os
 import warnings
 from collections import deque
+from datetime import datetime, timezone
 
 warnings.simplefilter("ignore")
 
@@ -28,8 +29,15 @@ FLEET_CONFIG = {
 }
 
 STARTING_EQUITY = 0.0
-# UPDATE: Increased memory to 60 events
+# UPDATE: Increased memory to 60 lines for the main log
 EVENT_QUEUE = deque(maxlen=60)
+
+# UPDATE: Daily Stats Container
+DAILY_STATS = {
+    "wins": 0,
+    "total": 0,
+    "last_reset_day": datetime.now(timezone.utc).day
+}
 
 def load_anchor(current_equity):
     try:
@@ -52,6 +60,22 @@ def update_heartbeat(status="ALIVE"):
         os.replace(temp_file, "heartbeat.json")
     except: pass
 
+def check_daily_reset():
+    """Resets win rate counter at midnight UTC"""
+    global DAILY_STATS
+    current_day = datetime.now(timezone.utc).day
+    if current_day != DAILY_STATS["last_reset_day"]:
+        DAILY_STATS = {"wins": 0, "total": 0, "last_reset_day": current_day}
+        return True
+    return False
+
+def update_stats(pnl_value):
+    """Updates the win/loss counter based on closed trade PnL"""
+    global DAILY_STATS
+    DAILY_STATS["total"] += 1
+    if pnl_value > 0:
+        DAILY_STATS["wins"] += 1
+
 def normalize_positions(raw_positions):
     clean_pos = []
     if not raw_positions: return []
@@ -68,22 +92,33 @@ def normalize_positions(raw_positions):
         except: continue
     return clean_pos
 
-# UPDATE: Added 'session' parameter to this function
 def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", secured_list=[], new_event=None, session="N/A"):
-    global STARTING_EQUITY, EVENT_QUEUE
+    global STARTING_EQUITY, EVENT_QUEUE, DAILY_STATS
     try:
         if STARTING_EQUITY == 0.0 and equity > 0:
             STARTING_EQUITY = load_anchor(equity)
         
         pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
 
+        # UPDATE: Add Timestamp to every event
         if new_event:
-            t = time.strftime("%H:%M:%S")
-            EVENT_QUEUE.append(f"[{t}] {new_event}")
+            t_str = time.strftime("[%H:%M:%S]")
+            # Avoid double timestamps if the event already has one
+            if not new_event.startswith("["):
+                final_msg = f"{t_str} {new_event}"
+            else:
+                final_msg = new_event
+            EVENT_QUEUE.append(final_msg)
         
         events_str = "||".join(list(EVENT_QUEUE))
         pos_str = "NO_TRADES"
         risk_report = []
+
+        # Calculate Win Rate
+        win_rate = 0
+        if DAILY_STATS["total"] > 0:
+            win_rate = int((DAILY_STATS["wins"] / DAILY_STATS["total"]) * 100)
+        daily_stats_str = f"{DAILY_STATS['wins']}/{DAILY_STATS['total']} ({win_rate}%)"
 
         if positions:
             pos_lines = []
@@ -126,7 +161,8 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
             "cash": f"{cash:.2f}",
             "pnl": f"{pnl:+.2f}",
             "status": status_msg,
-            "session": session,  # New Field
+            "session": session,
+            "win_rate": daily_stats_str, # NEW FIELD
             "events": events_str,
             "positions": pos_str,
             "risk_report": "::".join(risk_report),
@@ -187,7 +223,7 @@ def main_loop():
             print("xx CRITICAL: No WALLET_ADDRESS found.")
             return
 
-        msg.send("info", "🦅 **LUMA UPDATE:** MEME FLEET (6-PACK) + RECOVERY LOCK ($412).")
+        msg.send("info", "🦅 **LUMA UPDATE:** MEME FLEET (6-PACK) + WIN RATE TRACKING.")
         last_history_check = 0
         cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}
         leverage_memory = {}
@@ -195,7 +231,11 @@ def main_loop():
         while True:
             update_heartbeat("ALIVE")
             session_data = chronos.get_session()
-            session_name = session_data['name'] # Extract Session Name
+            session_name = session_data['name']
+            
+            # Check for midnight reset
+            if check_daily_reset():
+                update_dashboard(equity, cash, "DAILY RESET", clean_positions, risk_mode, secured, new_event="--- DAILY STATS RESET ---", session=session_name)
 
             if time.time() - last_history_check > 14400:
                 try:
@@ -237,7 +277,6 @@ def main_loop():
             # --- SCALABLE STATE MACHINE (RECOVERY LOCK) ---
             RECOVERY_TARGET = 412.0
             risk_mode = "STANDARD"
-            
             if equity < RECOVERY_TARGET:
                 risk_mode = "RECOVERY"
             elif current_roe_pct >= 5.0:
@@ -250,7 +289,7 @@ def main_loop():
 
             status_msg = f"Mode:{risk_mode} (ROE:{current_roe_pct:.2f}%) Cap:${max_margin_usd:.0f}"
             
-            # UPDATE: Pass session_name to dashboard
+            # NOTE: We pass 'None' for new_event here to avoid spamming the log every loop
             update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, session=session_name)
             
             print(f">> [{time.strftime('%H:%M:%S')}] {status_msg}", end='\r')
@@ -259,7 +298,7 @@ def main_loop():
             for coin, rules in FLEET_CONFIG.items():
                 update_heartbeat("SCANNING")
 
-                # --- 1. SMART LEVERAGE MANAGEMENT ---
+                # --- 1. LEVERAGE SYNC ---
                 target_leverage = rules['lev']
                 if risk_mode == "GOD_MODE" and rules['type'] == "MEME":
                     target_leverage = 10
@@ -294,7 +333,7 @@ def main_loop():
                             continue
                     except: continue
 
-                # --- 2. THE SIGNAL HIERARCHY ---
+                # --- 2. SIGNAL LOGIC ---
                 proposal = None
                 trend_status = predator.analyze_divergence(candles, coin)
                 season_info = season.get_multiplier(rules['type'])
@@ -304,47 +343,44 @@ def main_loop():
                 whale_signal = whale.hunt_turtle(candles) or whale.hunt_ghosts(candles)
                 xeno_signal = xeno.hunt(coin, candles)
 
-                # --- A. SNIPER (MOMENTUM) ---
                 if xeno_signal == "ATTACK":
-                    if rules['type'] == "OFF":
-                        continue
+                    if rules['type'] == "OFF": continue
                     else:
                         if trend_status == "REAL_PUMP" or trend_status is None:
-                            proposal = {
-                                "source": "SNIPER",
-                                "side": "BUY",
-                                "price": current_price * 0.999,
-                                "reason": "MOMENTUM_CONFIRMED"
-                            }
+                            proposal = {"source": "SNIPER", "side": "BUY", "price": current_price * 0.999, "reason": "MOMENTUM_CONFIRMED"}
 
-                # --- B. WHALE (SMART MONEY) ---
                 if whale_signal:
                     if trend_status != "REAL_PUMP":
-                        proposal = {
-                            "source": whale_signal['type'],
-                            "side": whale_signal['side'],
-                            "price": whale_signal['price'],
-                            "reason": "REVERSAL_CONFIRMED"
-                        }
+                        proposal = {"source": whale_signal['type'], "side": whale_signal['side'], "price": whale_signal['price'], "reason": "REVERSAL_CONFIRMED"}
 
                 if proposal:
                     raw_margin = base_margin_usd * season_mult
                     final_margin_usd = min(raw_margin, max_margin_usd)
                     final_size = round(final_margin_usd * target_leverage, 2)
-
                     if final_size < 40: final_size = 40
 
                     if oracle.consult(coin, proposal['source'], proposal['price'], context_str):
                         lev_tag = f"{target_leverage}x"
-                        log = f"{coin}: {proposal['source']} ({proposal['reason']}) [${final_margin_usd:.0f} Margin | {lev_tag}]"
-                        print(f"\n>> {log}")
+                        log_msg = f"OPEN {coin} ({proposal['source']}) ${final_margin_usd:.0f}"
+                        print(f"\n>> {log_msg}")
+                        
                         hands.place_trap(coin, proposal['side'], proposal['price'], final_size)
                         msg.notify_trade(coin, proposal['source'], proposal['price'], final_size)
+                        
+                        # Add to dashboard log immediately
+                        update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, new_event=log_msg, session=session_name)
             
             ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
             if ratchet_events:
                 for event in ratchet_events:
-                    update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, new_event=event)
+                    # Parse event for Win Rate Logic
+                    # Examples: "CLOSED WIF (PROFIT) +$12.50" or "STOP LOSS WIF -$5.00"
+                    if "PROFIT" in event or "+" in event:
+                        update_stats(1) # Win
+                    elif "LOSS" in event or "-" in event:
+                        update_stats(-1) # Loss
+                    
+                    update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, new_event=event, session=session_name)
             
             time.sleep(3)
 
