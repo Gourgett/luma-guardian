@@ -1,106 +1,94 @@
 import time
-from config import conf
 
 class DeepSea:
     def __init__(self):
-        self.trauma_ward = {}
-        
-        # --- CASH TRIGGERS ---
-        self.trigger_meme = 0.25
-        self.trigger_prince = 0.50
-        
-        # --- STOP LIMITS ---
-        self.stop_limit_meme = 25.0
-        self.stop_limit_prince = 30.0
-        
-        # --- TRAILING ---
-        self.initial_guard = 0.05
-        self.std_trail = 0.80
-        self.super_trail = 0.99
-        self.super_trigger = 10.0
+        print(">> DEEP SEA: Ratchet System Loaded (Mode: SURGICAL | PRINCE -4% | MEME -6% | SECURE 5)")
+        self.secured_coins = []
+        self.peak_roe = {}
+        self.trauma_record = {}
 
     def check_trauma(self, hands, coin):
-        pass
+        # 5-Minute Cooldown for LOSSES only.
+        last_loss = self.trauma_record.get(coin, 0)
+        if time.time() - last_loss < 300:
+            return True # BLOCK TRADES
+        return False
 
     def manage_positions(self, hands, positions, fleet_config):
         events = []
-        active_coins = [p['coin'] for p in positions]
-        
-        # 1. CLEANUP (Only if active_coins is not empty to prevent glitch wipes)
-        if active_coins:
-            for coin in list(self.trauma_ward.keys()):
-                if coin not in active_coins:
-                    del self.trauma_ward[coin]
+        # Cleanup peaks for closed positions
+        current_coins = [p['coin'] for p in positions]
+        for c in list(self.peak_roe.keys()):
+            if c not in current_coins: del self.peak_roe[c]
 
         for p in positions:
             coin = p['coin']
-            try:
-                pnl = float(p['pnl'])
-                size = float(p['size'])
-                entry = float(p['entry'])
+            pnl = float(p['pnl'])
+            size = float(p['size'])
+            entry = float(p['entry'])
+
+            if coin not in fleet_config: continue
+
+            rules = fleet_config[coin]
+            leverage = rules['lev']
+            coin_type = rules['type'] # PRINCE or MEME
+
+            # CALCULATE ROE
+            margin = (abs(size) * entry) / leverage
+            if margin == 0: continue
+            roe = pnl / margin
+
+            # TRACK PEAK ROE
+            if coin not in self.peak_roe: self.peak_roe[coin] = roe
+            else:
+                if roe > self.peak_roe[coin]: self.peak_roe[coin] = roe
+            
+            peak = self.peak_roe[coin]
+
+            # --- SMART RISK STRATEGY ---
+            
+            # 1. DIFFERENTIAL HARD STOPS (The Only Major Change)
+            # Princes: Cut losses at -4% (Fixes the Risk Ratio)
+            # Memes: Keep at -8% (Standard)
+            if coin_type == "PRINCE":
+                current_floor = -0.04
+            else:
+                current_floor = -0.06
+
+            # 2. BREAKEVEN LOCK (Standard)
+            # Banks small wins so green trades don't turn red.
+            if peak >= 0.025:
+                current_floor = 0.005
+
+            # 3. BANKER TRAIL (Standard 2%)
+            # We keep this tight (0.02) to ensure Memes bank cash aggressively.
+            if peak >= 0.05:
+                current_floor = peak - 0.015
+
+            # CHECK EXIT
+            if roe < current_floor:
+                tag = "STOP LOSS" if current_floor < 0 else "PROFIT SECURED"
+
+                # Only record Trauma if it was a LOSS
+                if current_floor < 0:
+                    self.trauma_record[coin] = time.time()
                 
-                c_data = fleet_config.get(coin, {'type': 'MEME', 'lev': 10})
-                lev = c_data.get('lev', 10)
-                margin = (abs(size) * entry) / lev
-                roe = (pnl / margin) * 100 if margin > 0 else 0.0
+                hands.place_market_order(coin, "SELL" if size > 0 else "BUY", abs(size))
 
-                c_type = c_data.get('type', 'MEME')
-                trigger_val = self.trigger_meme if c_type == 'MEME' else self.trigger_prince
+                # LOGGING
+                pnl_str = f"{pnl:+.2f}"
+                events.append(f"💰 {tag}: {coin} ({pnl_str} | {roe*100:.1f}%)")
 
-                # --- 🛑 LAYER 1: HARD STOP ---
-                stop_threshold = self.stop_limit_meme if c_type == 'MEME' else self.stop_limit_prince
-                if roe < -(stop_threshold):
-                    print(f">> RATCHET: 🚨 HARD STOP {coin}")
-                    hands.cancel_active_orders(coin)
-                    side = "SELL" if size > 0 else "BUY"
-                    res = hands.place_market_order(coin, side, abs(size))
-                    if res is True:
-                        events.append(f"💀 {coin}: STOPPED OUT")
-                        continue
+                if coin in self.secured_coins: self.secured_coins.remove(coin)
 
-                # --- 💰 LAYER 2: PROFIT ---
-                if coin in self.trauma_ward:
-                    record = self.trauma_ward[coin]
-                    
-                    # Update High Water Mark
-                    if pnl > record['high']:
-                        record['high'] = pnl
-                        current_mult = self.super_trail if roe > self.super_trigger else self.std_trail
-                        potential_stop = record['high'] * current_mult
-                        
-                        new_stop = max(self.initial_guard, potential_stop)
-                        
-                        # LOG THE UPDATE (Visual Confirmation)
-                        if new_stop > record['stop']:
-                            record['stop'] = new_stop
-                            # Only log significant moves to avoid spam (>$0.01 change)
-                            events.append(f"📈 {coin}: STOP UP -> ${new_stop:.2f}")
+            # VISUAL MARKER
+            elif current_floor > 0 and coin not in self.secured_coins:
+                self.secured_coins.append(coin)
 
-                    # THE EXIT TRIGGER
-                    if pnl < record['stop']:
-                        print(f">> RATCHET: Bank {coin}. PnL ${pnl:.2f} < Stop ${record['stop']:.2f}")
-                        hands.cancel_active_orders(coin)
-                        side = "SELL" if size > 0 else "BUY"
-                        res = hands.place_market_order(coin, side, abs(size))
-                        if res is True:
-                            events.append(f"💰 {coin}: BANKED @ ${pnl:.2f}")
-                            del self.trauma_ward[coin]
-                        else:
-                            events.append(f"⚠️ {coin}: CLOSE FAIL {res}")
+            # Emergency Hard Stop
+            if roe < -0.40:
+                 hands.place_market_order(coin, "SELL" if size > 0 else "BUY", abs(size))
+                 self.trauma_record[coin] = time.time()
+                 events.append(f"xx EMERGENCY CUT: {coin}")
 
-                else:
-                    if pnl >= trigger_val:
-                        self.trauma_ward[coin] = {
-                            'high': pnl,
-                            'stop': self.initial_guard
-                        }
-                        events.append(f"🔒 {coin}: SECURED (>${trigger_val})")
-
-            except Exception as e:
-                print(f"xx RATCHET ERROR {coin}: {e}")
-                    
         return events
-
-    @property
-    def secured_coins(self):
-        return list(self.trauma_ward.keys())
