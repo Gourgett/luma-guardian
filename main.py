@@ -9,12 +9,12 @@ from datetime import datetime, timezone
 warnings.simplefilter("ignore")
 
 # ==============================================================================
-#  LUMA SINGULARITY [PERFECT CORE + MEMORY]
+#  LUMA SINGULARITY [TIER: OFF HIERARCHY + MEME PRESERVATION]
 # ==============================================================================
 
 CONFIG_FILE = "server_config.json"
 ANCHOR_FILE = "equity_anchor.json"
-VOLUME_FILE = "daily_volume.json"
+VOLUME_FILE = "daily_volume.json"  # <--- NEW MEMORY FILE
 BTC_TICKER = "BTC"
 
 FLEET_CONFIG = {
@@ -28,31 +28,40 @@ FLEET_CONFIG = {
 
 STARTING_EQUITY = 0.0
 
-# --- LOGGING ---
-TRADE_HISTORY = deque(maxlen=60) 
-LIVE_ACTIVITY = "Waiting for signal..."
+# --- SEPARATED LOGGING SYSTEM ---
+TRADE_HISTORY = deque(maxlen=59) 
+LIVE_ACTIVITY = "Waiting for signal..." 
 
-# --- MEMORY SYSTEM (Wins/Losses Saved to File) ---
+# --- PERSISTENT VOLUME MEMORY ---
 def load_volume():
-    default = {"wins": 0, "total": 0, "last_reset_day": datetime.now(timezone.utc).day}
+    """Restores daily stats from disk on restart"""
+    default_stats = {
+        "wins": 0, 
+        "total": 0, 
+        "last_reset_day": datetime.now(timezone.utc).day
+    }
     try:
         if os.path.exists(VOLUME_FILE):
             with open(VOLUME_FILE, 'r') as f:
                 data = json.load(f)
-                if data.get("last_reset_day") != default["last_reset_day"]:
-                    return default # New day, new stats
+                # Check if it's a new day even if file exists
+                current_day = datetime.now(timezone.utc).day
+                if data.get("last_reset_day") != current_day:
+                    return default_stats
                 return data
-        return default
-    except: return default
+        return default_stats
+    except:
+        return default_stats
 
 def save_volume():
+    """Saves daily stats to disk instantly"""
     global DAILY_STATS
     try:
         with open(VOLUME_FILE, 'w') as f:
             json.dump(DAILY_STATS, f)
     except: pass
 
-DAILY_STATS = load_volume() # Load stats on boot
+DAILY_STATS = load_volume() # <--- LOAD ON STARTUP
 
 def load_anchor(current_equity):
     try:
@@ -80,7 +89,7 @@ def check_daily_reset():
     current_day = datetime.now(timezone.utc).day
     if current_day != DAILY_STATS["last_reset_day"]:
         DAILY_STATS = {"wins": 0, "total": 0, "last_reset_day": current_day}
-        save_volume()
+        save_volume() # <--- SAVE RESET
         return True
     return False
 
@@ -89,7 +98,7 @@ def update_stats(pnl_value):
     DAILY_STATS["total"] += 1
     if pnl_value > 0:
         DAILY_STATS["wins"] += 1
-    save_volume()
+    save_volume() # <--- SAVE UPDATE
 
 def normalize_positions(raw_positions):
     clean_pos = []
@@ -107,35 +116,26 @@ def normalize_positions(raw_positions):
         except: continue
     return clean_pos
 
-def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", secured_list=[], trade_event=None, activity_event=None, new_event=None, session="N/A"):
+def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", secured_list=[], trade_event=None, activity_event=None, session="N/A"):
     global STARTING_EQUITY, TRADE_HISTORY, LIVE_ACTIVITY, DAILY_STATS
     try:
-        # FILTER: Sort events into History (Closed) or Activity (Open/Info)
-        if new_event:
-            # If it's a Profit/Loss message, it goes to History
-            if "CLOSED" in str(new_event) or "PROFIT" in str(new_event) or "LOSS" in str(new_event) or "Daily" in str(new_event):
-                trade_event = new_event
-            else:
-                # Everything else (Open, Scanning, etc) goes to Activity ticker
-                activity_event = new_event
-
         if STARTING_EQUITY == 0.0 and equity > 0:
             STARTING_EQUITY = load_anchor(equity)
         
         pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
 
-        # 1. TRADE LOG (Only Results)
         if trade_event:
             t_str = time.strftime("[%H:%M:%S]")
-            msg = trade_event if str(trade_event).startswith("[") else f"{t_str} {trade_event}"
-            TRADE_HISTORY.append(msg)
+            if not trade_event.startswith("["):
+                final_msg = f"{t_str} {trade_event}"
+            else:
+                final_msg = trade_event
+            TRADE_HISTORY.append(final_msg)
         
-        # 2. ACTIVITY TICKER (Single Line Update)
         if activity_event:
             LIVE_ACTIVITY = f">> {activity_event}"
 
         history_str = "||".join(list(TRADE_HISTORY))
-        
         pos_str = "NO_TRADES"
         risk_report = []
 
@@ -233,7 +233,7 @@ except Exception as e:
 
 def main_loop():
     global STARTING_EQUITY
-    print("🦅 LUMA SINGULARITY (MEMORY + SAFETY)")
+    print("🦅 LUMA SINGULARITY (PERSISTENT MEMORY)")
     try:
         update_heartbeat("BOOTING")
         
@@ -248,28 +248,18 @@ def main_loop():
             print("xx CRITICAL: No WALLET_ADDRESS found.")
             return
 
-        msg.send("info", "🦅 **LUMA REBOOT:** MEMORY ONLINE + SAFETY PATCH.")
+        msg.send("info", "🦅 **LUMA UPDATE:** MEMORY CORE ACTIVE (STATS SAVED).")
         last_history_check = 0
         cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}
         leverage_memory = {}
-
-        # --- SAFETY FIX: Initialize variables BEFORE loop ---
-        # This prevents the "UnboundLocalError" crash you were seeing
-        equity = 0.0
-        cash = 0.0
-        clean_positions = []
-        risk_mode = "BOOTING"
-        secured = []
-        session_name = "N/A"
 
         while True:
             update_heartbeat("ALIVE")
             session_data = chronos.get_session()
             session_name = session_data['name']
             
-            # Now safe to call because variables exist
             if check_daily_reset():
-                update_dashboard(equity, cash, "DAILY RESET", clean_positions, risk_mode, secured, new_event="--- DAILY STATS RESET ---", session=session_name)
+                update_dashboard(equity, cash, "DAILY RESET", clean_positions, risk_mode, secured, trade_event="--- DAILY STATS RESET ---", session=session_name)
 
             if time.time() - last_history_check > 14400:
                 try:
@@ -280,7 +270,9 @@ def main_loop():
                 except: pass
 
             history_data = cached_history_data
-            clean_positions = [] # Reset for this iteration
+            equity = 0.0
+            cash = 0.0
+            clean_positions = []
             open_orders = []
 
             try:
@@ -337,7 +329,6 @@ def main_loop():
             max_margin_usd  = equity * 0.165
             secured = ratchet.secured_coins
             
-            # Regular update (Status only)
             update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, session=session_name)
             
             print(f">> [{time.strftime('%H:%M:%S')}] {status_msg}", end='\r')
@@ -352,8 +343,8 @@ def main_loop():
                 if risk_mode == "RECOVERY" or shield_active:
                     target_leverage = 5
                 
-                # Force Int (Safety)
-                target_leverage = int(target_leverage)
+                # --- LEVERAGE FIX: FORCE INTEGER ---
+                target_leverage = int(target_leverage) 
 
                 if coin in active_coins:
                     pass
@@ -374,8 +365,8 @@ def main_loop():
                 current_price = float(candles[-1].get('close') or candles[-1].get('c') or 0)
                 if current_price == 0: continue
                 
-                # Activity Log (Scanning)
-                update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, session=session_name, new_event=f"Scanning {coin}...")
+                # --- LIVE ACTIVITY UPDATE ---
+                update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, session=session_name, activity_event=f"Scanning {coin} ({rules['type']})...")
 
                 pending = next((o for o in open_orders if o.get('coin') == coin), None)
                 if pending:
@@ -386,8 +377,7 @@ def main_loop():
                             msg_txt = f"🏃 CHASING {coin} (Adjusting Trap)"
                             print(f">> {msg_txt}")
                             hands.cancel_all_orders(coin)
-                            # Activity Log (Chasing)
-                            update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, session=session_name, new_event=msg_txt)
+                            update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, session=session_name, activity_event=msg_txt)
                             continue
                     except: continue
 
@@ -431,8 +421,7 @@ def main_loop():
                         hands.place_trap(coin, proposal['side'], proposal['price'], final_size)
                         msg.notify_trade(coin, proposal['source'], proposal['price'], final_size)
                         
-                        # Open Trade -> Activity Log
-                        update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, new_event=log_msg, session=session_name)
+                        update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, trade_event=log_msg, session=session_name)
             
             ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
             if ratchet_events:
@@ -440,8 +429,7 @@ def main_loop():
                     if "PROFIT" in event or "+" in event: update_stats(1)
                     elif "LOSS" in event or "-" in event: update_stats(-1)
                     
-                    # Profit/Loss -> History Log
-                    update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, new_event=event, session=session_name)
+                    update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, trade_event=event, session=session_name)
             
             time.sleep(3)
 
