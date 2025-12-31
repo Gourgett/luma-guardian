@@ -28,7 +28,8 @@ FLEET_CONFIG = {
 }
 
 STARTING_EQUITY = 0.0
-EVENT_QUEUE = deque(maxlen=10)
+# UPDATE: Increased memory to 60 events
+EVENT_QUEUE = deque(maxlen=60)
 
 def load_anchor(current_equity):
     try:
@@ -67,7 +68,8 @@ def normalize_positions(raw_positions):
         except: continue
     return clean_pos
 
-def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", secured_list=[], new_event=None):
+# UPDATE: Added 'session' parameter to this function
+def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", secured_list=[], new_event=None, session="N/A"):
     global STARTING_EQUITY, EVENT_QUEUE
     try:
         if STARTING_EQUITY == 0.0 and equity > 0:
@@ -124,6 +126,7 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
             "cash": f"{cash:.2f}",
             "pnl": f"{pnl:+.2f}",
             "status": status_msg,
+            "session": session,  # New Field
             "events": events_str,
             "positions": pos_str,
             "risk_report": "::".join(risk_report),
@@ -192,6 +195,7 @@ def main_loop():
         while True:
             update_heartbeat("ALIVE")
             session_data = chronos.get_session()
+            session_name = session_data['name'] # Extract Session Name
 
             if time.time() - last_history_check > 14400:
                 try:
@@ -234,7 +238,6 @@ def main_loop():
             RECOVERY_TARGET = 412.0
             risk_mode = "STANDARD"
             
-            # RULE: NO GOD MODE UNTIL $412 IS SECURED
             if equity < RECOVERY_TARGET:
                 risk_mode = "RECOVERY"
             elif current_roe_pct >= 5.0:
@@ -246,7 +249,10 @@ def main_loop():
             secured = ratchet.secured_coins
 
             status_msg = f"Mode:{risk_mode} (ROE:{current_roe_pct:.2f}%) Cap:${max_margin_usd:.0f}"
-            update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured)
+            
+            # UPDATE: Pass session_name to dashboard
+            update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, session=session_name)
+            
             print(f">> [{time.strftime('%H:%M:%S')}] {status_msg}", end='\r')
 
             active_coins = [p['coin'] for p in clean_positions]
