@@ -28,8 +28,8 @@ FLEET_CONFIG = {
 STARTING_EQUITY = 0.0
 
 # --- SPLIT LOGGING SYSTEM ---
-TRADE_QUEUE = deque(maxlen=60)      # Closed Trades/Money (Bottom Log)
-ACTIVITY_QUEUE = deque(maxlen=6)    # Live Activity (Top Log)
+TRADE_QUEUE = deque(maxlen=60)      # Bottom Log
+ACTIVITY_QUEUE = deque(maxlen=6)    # Top Log
 
 DAILY_STATS = {
     "wins": 0,
@@ -88,22 +88,18 @@ def normalize_positions(raw_positions):
         except: continue
     return clean_pos
 
-# --- EXPLICIT UPDATE FUNCTION (NO KWARGS) ---
-# We list every possible variable name here to prevent "Unexpected Argument" crashes.
+# --- ROBUST UPDATE FUNCTION ---
 def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", secured_list=[], 
                      trade_event=None, activity_event=None, new_event=None, log=None, session="N/A"):
     global STARTING_EQUITY, TRADE_QUEUE, ACTIVITY_QUEUE, DAILY_STATS
     
-    # 1. Catch legacy arguments and route them
-    # If old code sends 'new_event', we decide where it goes
+    # Catch legacy argument names
     if new_event:
         if "$" in str(new_event) or "OPEN" in str(new_event) or "CLOSED" in str(new_event):
             trade_event = new_event
         else:
             activity_event = new_event
-    
-    if log: # Catch 'log' argument
-        trade_event = log
+    if log: trade_event = log
 
     try:
         if STARTING_EQUITY == 0.0 and equity > 0:
@@ -111,13 +107,11 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
         
         pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
 
-        # 2. Update Trade Log (Bottom - Persistent)
         if trade_event:
             t_str = time.strftime("[%H:%M:%S]")
             msg = trade_event if str(trade_event).startswith("[") else f"{t_str} {trade_event}"
             TRADE_QUEUE.append(msg)
         
-        # 3. Update Activity Log (Top - Rotating)
         if activity_event:
             t_str = time.strftime("%H:%M:%S")
             ACTIVITY_QUEUE.append(f"[{t_str}] {activity_event}")
@@ -221,7 +215,7 @@ except Exception as e:
 
 def main_loop():
     global STARTING_EQUITY
-    print("🦅 LUMA SINGULARITY (STABLE MODE)")
+    print("🦅 LUMA SINGULARITY (STABLE LOGIC)")
     try:
         update_heartbeat("BOOTING")
         
@@ -236,19 +230,18 @@ def main_loop():
             print("xx CRITICAL: No WALLET_ADDRESS found.")
             return
 
-        msg.send("info", "🦅 **LUMA REBOOT:** STABILIZED CORE + LEVERAGE FIX.")
+        msg.send("info", "🦅 **LUMA REBOOT:** BUGFIX APPLIED (LOOP ORDER).")
         last_history_check = 0
         cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}
         leverage_memory = {}
 
         while True:
-            try: # <--- GLOBAL SAFETY NET STARTS HERE
+            try:
                 update_heartbeat("ALIVE")
                 session_data = chronos.get_session()
                 session_name = session_data['name']
                 
-                if check_daily_reset():
-                    update_dashboard(equity, cash, "DAILY RESET", clean_positions, risk_mode, secured, trade_event="--- DAILY STATS RESET ---", session=session_name)
+                # --- MOVED DOWN: REMOVED DAILY CHECK FROM HERE ---
 
                 if time.time() - last_history_check > 14400:
                     try:
@@ -318,6 +311,11 @@ def main_loop():
                 max_margin_usd  = equity * 0.165
                 secured = ratchet.secured_coins
                 
+                # --- FIXED: DAILY CHECK IS NOW HERE ---
+                # Now that 'risk_mode' and 'secured' are defined, we can safely check for reset
+                if check_daily_reset():
+                    update_dashboard(equity, cash, "DAILY RESET", clean_positions, risk_mode, secured, trade_event="--- DAILY STATS RESET ---", session=session_name)
+                
                 # SAFE DASHBOARD UPDATE
                 update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, session=session_name)
                 
@@ -327,20 +325,17 @@ def main_loop():
                 for coin, rules in FLEET_CONFIG.items():
                     update_heartbeat("SCANNING")
 
-                    # --- 1. LEVERAGE SYNC (FIXED FOR OLD HANDS.PY) ---
                     target_leverage = rules['lev']
                     if risk_mode == "GOD_MODE" and rules['type'] == "MEME":
                         target_leverage = 10
                     if risk_mode == "RECOVERY" or shield_active:
                         target_leverage = 5
                     
-                    # FORCE INT CONVERSION HERE to prevent crashes with old Hands.py
                     target_leverage = int(target_leverage)
 
                     if coin not in active_coins:
                         if leverage_memory.get(coin) != target_leverage:
                             try:
-                                # We pass explicit int to be safe
                                 hands.set_leverage_all([coin], leverage=target_leverage)
                                 leverage_memory[coin] = target_leverage
                             except: pass
@@ -355,7 +350,6 @@ def main_loop():
                     current_price = float(candles[-1].get('close') or candles[-1].get('c') or 0)
                     if current_price == 0: continue
                     
-                    # --- LIVE ACTIVITY LOG ---
                     update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, session=session_name, activity_event=f"Scanning {coin}...")
 
                     pending = next((o for o in open_orders if o.get('coin') == coin), None)
@@ -371,7 +365,6 @@ def main_loop():
                                 continue
                         except: continue
 
-                    # --- 2. SIGNAL LOGIC ---
                     proposal = None
                     trend_status = predator.analyze_divergence(candles, coin)
                     season_info = season.get_multiplier(rules['type'])
@@ -411,7 +404,6 @@ def main_loop():
                             hands.place_trap(coin, proposal['side'], proposal['price'], final_size)
                             msg.notify_trade(coin, proposal['source'], proposal['price'], final_size)
                             
-                            # Log to Trade Queue (Bottom)
                             update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, trade_event=log_msg, session=session_name)
                 
                 ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
@@ -420,15 +412,13 @@ def main_loop():
                         if "PROFIT" in event or "+" in event: update_stats(1)
                         elif "LOSS" in event or "-" in event: update_stats(-1)
                         
-                        # Log to Trade Queue (Bottom)
                         update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, trade_event=event, session=session_name)
                 
                 time.sleep(3)
             
             except Exception as loop_error:
-                # GLOBAL CATCH - PREVENTS CRASH
                 print(f"xx MAIN LOOP ERROR: {loop_error}")
-                time.sleep(5) # Pause before restarting
+                time.sleep(5)
 
     except Exception as e:
         print(f"xx CRITICAL: {e}")
