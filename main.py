@@ -16,7 +16,6 @@ CONFIG_FILE = "server_config.json"
 ANCHOR_FILE = "equity_anchor.json"
 BTC_TICKER = "BTC"
 
-# --- THE STRUCTURAL FLEET (6-PACK) ---
 FLEET_CONFIG = {
     "WIF":    {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
     "DOGE":   {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
@@ -27,7 +26,10 @@ FLEET_CONFIG = {
 }
 
 STARTING_EQUITY = 0.0
-EVENT_QUEUE = deque(maxlen=60)
+
+# --- SEPARATED LOGGING SYSTEM ---
+TRADE_HISTORY = deque(maxlen=59) # The "Locked" Log (Wins/Losses/Opens)
+LIVE_ACTIVITY = "Waiting for signal..." # The "Line 60" Ticker
 
 DAILY_STATS = {
     "wins": 0,
@@ -86,23 +88,31 @@ def normalize_positions(raw_positions):
         except: continue
     return clean_pos
 
-def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", secured_list=[], new_event=None, session="N/A"):
-    global STARTING_EQUITY, EVENT_QUEUE, DAILY_STATS
+def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", secured_list=[], trade_event=None, activity_event=None, session="N/A"):
+    global STARTING_EQUITY, TRADE_HISTORY, LIVE_ACTIVITY, DAILY_STATS
     try:
         if STARTING_EQUITY == 0.0 and equity > 0:
             STARTING_EQUITY = load_anchor(equity)
         
         pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
 
-        if new_event:
+        # 1. HANDLE TRADE LOG (Permanent)
+        if trade_event:
             t_str = time.strftime("[%H:%M:%S]")
-            if not new_event.startswith("["):
-                final_msg = f"{t_str} {new_event}"
+            if not trade_event.startswith("["):
+                final_msg = f"{t_str} {trade_event}"
             else:
-                final_msg = new_event
-            EVENT_QUEUE.append(final_msg)
+                final_msg = trade_event
+            TRADE_HISTORY.append(final_msg)
         
-        events_str = "||".join(list(EVENT_QUEUE))
+        # 2. HANDLE ACTIVITY LOG (Ephemeral)
+        if activity_event:
+            # We don't append, we overwrite.
+            LIVE_ACTIVITY = f">> {activity_event}"
+
+        # Join history with "||" for parsing
+        history_str = "||".join(list(TRADE_HISTORY))
+        
         pos_str = "NO_TRADES"
         risk_report = []
 
@@ -154,7 +164,8 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
             "status": status_msg,
             "session": session,
             "win_rate": daily_stats_str,
-            "events": events_str,
+            "trade_history": history_str, # Renamed key
+            "live_activity": LIVE_ACTIVITY, # New Key
             "positions": pos_str,
             "risk_report": "::".join(risk_report),
             "mode": mode,
@@ -214,7 +225,7 @@ def main_loop():
             print("xx CRITICAL: No WALLET_ADDRESS found.")
             return
 
-        msg.send("info", "🦅 **LUMA UPDATE:** TITAN & SHIELD MODES (BOTH USE 95% FILTER).")
+        msg.send("info", "🦅 **LUMA UPDATE:** SPLIT LOGS (HISTORY + LIVE ACTIVITY).")
         last_history_check = 0
         cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}
         leverage_memory = {}
@@ -225,7 +236,7 @@ def main_loop():
             session_name = session_data['name']
             
             if check_daily_reset():
-                update_dashboard(equity, cash, "DAILY RESET", clean_positions, risk_mode, secured, new_event="--- DAILY STATS RESET ---", session=session_name)
+                update_dashboard(equity, cash, "DAILY RESET", clean_positions, risk_mode, secured, trade_event="--- DAILY STATS RESET ---", session=session_name)
 
             if time.time() - last_history_check > 14400:
                 try:
@@ -257,7 +268,7 @@ def main_loop():
             start_eq_safe = STARTING_EQUITY if STARTING_EQUITY > 0 else 1.0
             current_roe_pct = (current_pnl / start_eq_safe) * 100
 
-            # --- CIRCUIT BREAKER (HARD FLOOR) ---
+            # --- CIRCUIT BREAKER ---
             if equity < 300.0 and equity > 1.0:
                  print("xx CRITICAL: EQUITY BELOW $300. HALTING TRADING.")
                  msg.send("errors", "CRITICAL: HARD FLOOR BREACHED. SHUTTING DOWN.")
@@ -266,40 +277,36 @@ def main_loop():
 
             # --- SCALABLE STATE MACHINE ---
             RECOVERY_TARGET = 412.0
-            TITAN_THRESHOLD = 12.0   # +12% ROE -> Strict Filter
-            SHIELD_THRESHOLD = -10.0 # -10% ROE -> Strict Filter (No longer Halts)
+            TITAN_THRESHOLD = 12.0
+            SHIELD_THRESHOLD = -10.0
             
             risk_mode = "STANDARD"
             titan_active = False
             shield_active = False
 
-            # 1. CHECK DAILY EXTREMES (TITAN or SHIELD)
             if current_roe_pct >= TITAN_THRESHOLD:
                 titan_active = True
                 status_msg = f"Mode:{risk_mode} (TITAN ACTIVE) | ROE:+{current_roe_pct:.2f}%"
             elif current_roe_pct <= SHIELD_THRESHOLD:
                 shield_active = True
-                # We enforce Recovery Mode leverage if we are in the hole
                 risk_mode = "RECOVERY" 
                 status_msg = f"🛡️ SHIELD ACTIVE (STRICT FILTER) | ROE:{current_roe_pct:.2f}%"
             else:
                 status_msg = f"Mode:{risk_mode} (ROE:{current_roe_pct:.2f}%)"
 
-            # 2. CHECK LEVERAGE/MODE HIERARCHY
-            # Priority: If already in Shield (loss), we are in Recovery mode logic (5x).
-            # If not in Shield, check Equity Floor.
             if not shield_active:
                 if equity < RECOVERY_TARGET:
                     risk_mode = "RECOVERY"
                 elif current_roe_pct >= 5.0:
                     risk_mode = "GOD_MODE"
-                    # If Titan is active, it stays active, but we use God Mode leverage.
                     if titan_active:
                         status_msg = f"Mode:GOD_MODE (TITAN ACTIVE) | ROE:+{current_roe_pct:.2f}%"
 
             base_margin_usd = equity * 0.11
             max_margin_usd  = equity * 0.165
             secured = ratchet.secured_coins
+            
+            # Note: We do NOT pass trade_event here, only update status
             update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, session=session_name)
             
             print(f">> [{time.strftime('%H:%M:%S')}] {status_msg}", end='\r')
@@ -334,14 +341,21 @@ def main_loop():
                 current_price = float(candles[-1].get('close') or candles[-1].get('c') or 0)
                 if current_price == 0: continue
                 
+                # --- LIVE ACTIVITY UPDATE ---
+                # This updates the "Ticker" on the dashboard without saving to history
+                update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, session=session_name, activity_event=f"Scanning {coin} ({rules['type']})...")
+
                 pending = next((o for o in open_orders if o.get('coin') == coin), None)
                 if pending:
                     try:
                         order_price = float(pending.get('limitPx') or pending.get('price') or 0)
                         gap = abs(current_price - order_price) / order_price
                         if gap > 0.005:
-                            print(f">> 🏃 CHASING: {coin} moved away ({gap*100:.1f}%). Adjusting trap...")
+                            msg_txt = f"🏃 CHASING {coin} (Adjusting Trap)"
+                            print(f">> {msg_txt}")
                             hands.cancel_all_orders(coin)
+                            # Log this as activity, not a trade event
+                            update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, session=session_name, activity_event=msg_txt)
                             continue
                     except: continue
 
@@ -359,8 +373,6 @@ def main_loop():
                     if rules['type'] == "OFF": 
                         continue
                     
-                    # DUAL STRICT FILTER (Used for both Titan AND Shield)
-                    # If we are Winning Big (Titan) OR Losing Big (Shield), we ONLY accept "REAL_PUMP" (95% Conf).
                     is_valid_sniper = False
                     if titan_active or shield_active:
                          if trend_status == "REAL_PUMP": is_valid_sniper = True
@@ -386,14 +398,18 @@ def main_loop():
                         print(f"\n>> {log_msg}")
                         hands.place_trap(coin, proposal['side'], proposal['price'], final_size)
                         msg.notify_trade(coin, proposal['source'], proposal['price'], final_size)
-                        update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, new_event=log_msg, session=session_name)
+                        
+                        # IMPORTANT: This IS a trade event, so we send 'trade_event'
+                        update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, trade_event=log_msg, session=session_name)
             
             ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
             if ratchet_events:
                 for event in ratchet_events:
                     if "PROFIT" in event or "+" in event: update_stats(1)
                     elif "LOSS" in event or "-" in event: update_stats(-1)
-                    update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, new_event=event, session=session_name)
+                    
+                    # IMPORTANT: This IS a trade event
+                    update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, trade_event=event, session=session_name)
             
             time.sleep(3)
 
