@@ -16,9 +16,20 @@ ANCHOR_FILE = "equity_anchor.json"
 BTC_TICKER = "BTC"
 
 FLEET_CONFIG = {
-    "WIF":   {"type": "MEME",   "lev": 5,  "risk_mult": 1.0, "stop_loss": 0.06},
-    "DOGE":  {"type": "MEME",   "lev": 5,  "risk_mult": 1.0, "stop_loss": 0.06},
-    "PENGU": {"type": "MEME",   "lev": 5,  "risk_mult": 1.0, "stop_loss": 0.06}
+    # --- THE VETERANS ---
+    "WIF":    {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
+    "DOGE":   {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
+    "PENGU":  {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
+
+    # --- THE REINFORCEMENTS (Structural Beta) ---
+    # POPCAT: The 'Cat' version of WIF. High liquidity, clean charts.
+    "POPCAT": {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
+    
+    # BRETT: The 'Pepe' of Base chain. Moves with ETH.
+    "BRETT":  {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
+    
+    # SPX: The 'Cult' hedge. Moves like PENGU (Community driven).
+    "SPX":    {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06}
 }
 
 STARTING_EQUITY = 0.0
@@ -181,7 +192,7 @@ def main_loop():
             print("xx CRITICAL: No WALLET_ADDRESS found.")
             return
 
-        msg.send("info", "🦅 **LUMA UPDATE:** MEMES UNTOUCHED. OFF FILTER ACTIVE.")
+        msg.send("info", "🦅 **LUMA UPDATE:** MEME FLEET DEPLOYED (6-PACK).")
         last_history_check = 0
         cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}
         leverage_memory = {}
