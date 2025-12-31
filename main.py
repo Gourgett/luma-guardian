@@ -28,8 +28,8 @@ FLEET_CONFIG = {
 STARTING_EQUITY = 0.0
 
 # --- SEPARATED LOGGING SYSTEM ---
-TRADE_HISTORY = deque(maxlen=60)    # Closed Transactions (Bottom Log)
-ACTIVITY_QUEUE = deque(maxlen=6)    # System Activity (Top Log, Rotating)
+TRADE_HISTORY = deque(maxlen=59) # The "Locked" Log (Wins/Losses/Opens)
+LIVE_ACTIVITY = "Waiting for signal..." # The "Line 60" Ticker
 
 DAILY_STATS = {
     "wins": 0,
@@ -89,14 +89,14 @@ def normalize_positions(raw_positions):
     return clean_pos
 
 def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", secured_list=[], trade_event=None, activity_event=None, session="N/A"):
-    global STARTING_EQUITY, TRADE_HISTORY, ACTIVITY_QUEUE, DAILY_STATS
+    global STARTING_EQUITY, TRADE_HISTORY, LIVE_ACTIVITY, DAILY_STATS
     try:
         if STARTING_EQUITY == 0.0 and equity > 0:
             STARTING_EQUITY = load_anchor(equity)
         
         pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
 
-        # 1. HANDLE TRADE LOG (Permanent - 60 lines)
+        # 1. HANDLE TRADE LOG (Permanent)
         if trade_event:
             t_str = time.strftime("[%H:%M:%S]")
             if not trade_event.startswith("["):
@@ -105,14 +105,13 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
                 final_msg = trade_event
             TRADE_HISTORY.append(final_msg)
         
-        # 2. HANDLE ACTIVITY LOG (Rotating - 6 lines)
+        # 2. HANDLE ACTIVITY LOG (Ephemeral)
         if activity_event:
-            t_str = time.strftime("[%H:%M:%S]")
-            # Append to list instead of overwriting string
-            ACTIVITY_QUEUE.append(f"{t_str} {activity_event}")
+            # We don't append, we overwrite.
+            LIVE_ACTIVITY = f">> {activity_event}"
 
+        # Join history with "||" for parsing
         history_str = "||".join(list(TRADE_HISTORY))
-        activity_str = "||".join(list(ACTIVITY_QUEUE)) # New list-based string
         
         pos_str = "NO_TRADES"
         risk_report = []
@@ -165,8 +164,8 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
             "status": status_msg,
             "session": session,
             "win_rate": daily_stats_str,
-            "trade_history": history_str, 
-            "live_activity": activity_str, # Now passing a join of the queue
+            "trade_history": history_str, # Renamed key
+            "live_activity": LIVE_ACTIVITY, # New Key
             "positions": pos_str,
             "risk_report": "::".join(risk_report),
             "mode": mode,
@@ -226,7 +225,7 @@ def main_loop():
             print("xx CRITICAL: No WALLET_ADDRESS found.")
             return
 
-        msg.send("info", "🦅 **LUMA UPDATE:** SPLIT LOGS + INT LEVERAGE FIX.")
+        msg.send("info", "🦅 **LUMA UPDATE:** SPLIT LOGS (HISTORY + LIVE ACTIVITY).")
         last_history_check = 0
         cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}
         leverage_memory = {}
@@ -322,9 +321,6 @@ def main_loop():
                     target_leverage = 10
                 if risk_mode == "RECOVERY" or shield_active:
                     target_leverage = 5
-                
-                # --- LEVERAGE FIX: Force Int Conversion ---
-                target_leverage = int(target_leverage)
 
                 if coin in active_coins:
                     pass
@@ -345,7 +341,8 @@ def main_loop():
                 current_price = float(candles[-1].get('close') or candles[-1].get('c') or 0)
                 if current_price == 0: continue
                 
-                # --- LIVE ACTIVITY UPDATE (Appends to deque now) ---
+                # --- LIVE ACTIVITY UPDATE ---
+                # This updates the "Ticker" on the dashboard without saving to history
                 update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, session=session_name, activity_event=f"Scanning {coin} ({rules['type']})...")
 
                 pending = next((o for o in open_orders if o.get('coin') == coin), None)
@@ -357,7 +354,7 @@ def main_loop():
                             msg_txt = f"🏃 CHASING {coin} (Adjusting Trap)"
                             print(f">> {msg_txt}")
                             hands.cancel_all_orders(coin)
-                            # Log this as activity
+                            # Log this as activity, not a trade event
                             update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, session=session_name, activity_event=msg_txt)
                             continue
                     except: continue
@@ -402,7 +399,7 @@ def main_loop():
                         hands.place_trap(coin, proposal['side'], proposal['price'], final_size)
                         msg.notify_trade(coin, proposal['source'], proposal['price'], final_size)
                         
-                        # IMPORTANT: This IS a trade event
+                        # IMPORTANT: This IS a trade event, so we send 'trade_event'
                         update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, trade_event=log_msg, session=session_name)
             
             ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
