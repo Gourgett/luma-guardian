@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 warnings.simplefilter("ignore")
 
 # ==============================================================================
-#  LUMA SINGULARITY [TIER: OFF HIERARCHY + MEME PRESERVATION]
+#  LUMA SINGULARITY [PERSISTENT MEMORY /app/data]
 # ==============================================================================
 
 # --- PATH CONFIGURATION ---
@@ -78,6 +78,10 @@ def save_volume():
 DAILY_STATS = load_volume() # <--- LOAD ON STARTUP
 
 def load_anchor(current_equity):
+    """
+    Loads the start equity. 
+    NOTE: If you want to force it to 412, we handle that in main_loop now.
+    """
     try:
         if os.path.exists(ANCHOR_FILE):
             with open(ANCHOR_FILE, 'r') as f:
@@ -208,7 +212,6 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
             "mode": mode,
             "updated": time.time()
         }
-        # Note: Dashboard state stays in root so the web app can find it easily
         temp_dash = "dashboard_state.tmp"
         with open(temp_dash, "w") as f: json.dump(data, f, ensure_ascii=False)
         os.replace(temp_dash, "dashboard_state.json")
@@ -247,11 +250,28 @@ except Exception as e:
     sys.exit()
 
 def main_loop():
-    global STARTING_EQUITY
+    global STARTING_EQUITY, DAILY_STATS
     print("🦅 LUMA SINGULARITY (PERSISTENT MEMORY /app/data)")
     try:
         update_heartbeat("BOOTING")
         
+        # --- 1. FORCE RESET ANCHOR TO 412.0 ---
+        try:
+            print(">> [RESET] Forcing Anchor to $412.00")
+            with open(ANCHOR_FILE, 'w') as f:
+                json.dump({"start_equity": 412.0}, f)
+            STARTING_EQUITY = 412.0
+        except Exception as e:
+            print(f"xx ANCHOR RESET FAILED: {e}")
+
+        # --- 2. FORCE RESET DAILY STATS ---
+        try:
+            print(">> [RESET] Clearing Daily Stats")
+            DAILY_STATS = {"wins": 0, "total": 0, "last_reset_day": datetime.now(timezone.utc).day}
+            save_volume()
+        except: pass
+        # --------------------------------------
+
         address = os.environ.get("WALLET_ADDRESS")
         if not address:
             try:
@@ -263,7 +283,7 @@ def main_loop():
             print("xx CRITICAL: No WALLET_ADDRESS found.")
             return
 
-        msg.send("info", "🦅 **LUMA UPDATE:** MEMORY PATH UPDATED (/app/data).")
+        msg.send("info", "🦅 **LUMA RESET:** PNL BASE SET TO $412.00")
         last_history_check = 0
         cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}
         leverage_memory = {}
@@ -299,10 +319,11 @@ def main_loop():
                     open_orders = user_state.get('openOrders', [])
             except: pass
 
-            if STARTING_EQUITY == 0.0 and equity > 0:
-                STARTING_EQUITY = load_anchor(equity)
+            # Force load 412 if it somehow reverted (double check)
+            if STARTING_EQUITY != 412.0:
+                 STARTING_EQUITY = load_anchor(412.0)
             
-            current_pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
+            current_pnl = equity - STARTING_EQUITY
             start_eq_safe = STARTING_EQUITY if STARTING_EQUITY > 0 else 1.0
             current_roe_pct = (current_pnl / start_eq_safe) * 100
 
@@ -440,8 +461,7 @@ def main_loop():
             ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
             if ratchet_events:
                 for event in ratchet_events:
-                    # --- EXPANDED MEMORY TRIGGERS (THE FIX) ---
-                    # Added check for "WIN" or "GAIN" just in case wording varies
+                    # --- EXPANDED MEMORY TRIGGERS ---
                     if "PROFIT" in event or "+" in event or "WIN" in event or "GAIN" in event: 
                         update_stats(1)
                     elif "LOSS" in event or "-" in event or "LOSE" in event: 
