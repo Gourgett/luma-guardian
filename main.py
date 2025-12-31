@@ -12,9 +12,21 @@ warnings.simplefilter("ignore")
 #  LUMA SINGULARITY [TIER: OFF HIERARCHY + MEME PRESERVATION]
 # ==============================================================================
 
+# --- PATH CONFIGURATION ---
+DATA_DIR = "/app/data"
+
+# Ensure the persistent directory exists
+if not os.path.exists(DATA_DIR):
+    try:
+        os.makedirs(DATA_DIR)
+        print(f">> Created persistent directory: {DATA_DIR}")
+    except Exception as e:
+        print(f"xx FAILED TO CREATE DATA DIR: {e}")
+
 CONFIG_FILE = "server_config.json"
-ANCHOR_FILE = "equity_anchor.json"
-VOLUME_FILE = "daily_volume.json"  # <--- NEW MEMORY FILE
+# SAVE IMPORTANT STATE TO THE PERSISTENT VOLUME:
+ANCHOR_FILE = os.path.join(DATA_DIR, "equity_anchor.json")
+VOLUME_FILE = os.path.join(DATA_DIR, "daily_volume.json")
 BTC_TICKER = "BTC"
 
 FLEET_CONFIG = {
@@ -59,7 +71,7 @@ def save_volume():
     try:
         with open(VOLUME_FILE, 'w') as f:
             json.dump(DAILY_STATS, f)
-            f.flush() # <--- FORCE SAVE TO DISK
+            f.flush()
             os.fsync(f.fileno())
     except: pass
 
@@ -196,6 +208,7 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
             "mode": mode,
             "updated": time.time()
         }
+        # Note: Dashboard state stays in root so the web app can find it easily
         temp_dash = "dashboard_state.tmp"
         with open(temp_dash, "w") as f: json.dump(data, f, ensure_ascii=False)
         os.replace(temp_dash, "dashboard_state.json")
@@ -235,7 +248,7 @@ except Exception as e:
 
 def main_loop():
     global STARTING_EQUITY
-    print("🦅 LUMA SINGULARITY (OFF FILTER ACTIVE)")
+    print("🦅 LUMA SINGULARITY (PERSISTENT MEMORY /app/data)")
     try:
         update_heartbeat("BOOTING")
         
@@ -250,7 +263,7 @@ def main_loop():
             print("xx CRITICAL: No WALLET_ADDRESS found.")
             return
 
-        msg.send("info", "🦅 **LUMA UPDATE:** MEMORY TRIGGERS EXPANDED.")
+        msg.send("info", "🦅 **LUMA UPDATE:** MEMORY PATH UPDATED (/app/data).")
         last_history_check = 0
         cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}
         leverage_memory = {}
