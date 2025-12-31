@@ -21,24 +21,26 @@ HTML_TEMPLATE = """
         .header { font-size: 1.2em; font-weight: bold; border-bottom: 1px solid #30363d; padding-bottom: 10px; margin-bottom: 10px; }
         table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
         th, td { text-align: left; padding: 8px; border-bottom: 1px solid #21262d; }
-        .log { font-size: 0.8em; opacity: 0.8; height: 350px; overflow-y: scroll; border: 1px solid #21262d; padding: 5px; }
+        .log { font-size: 0.8em; opacity: 0.8; height: 400px; overflow-y: scroll; border: 1px solid #21262d; padding: 5px; }
     </style>
 </head>
 <body>
     <div class="card">
         <div class="header">🦅 LUMA GUARDIAN [MEME FLEET]</div>
         <div id="status" style="font-size: 0.9em; margin-bottom: 10px;">CONNECTING...</div>
+        
         <div style="margin-top: 10px; display: flex; justify-content: space-between;">
             <div>EQUITY: <span id="equity" class="green">---</span></div>
             <div>CASH: <span id="cash">---</span></div>
         </div>
+        
         <div style="margin-top: 5px; display: flex; justify-content: space-between;">
             <div>PNL: <span id="pnl">---</span></div>
-            <div>
-                MODE: <span id="mode" class="gold">---</span> 
-                <span style="color: #30363d;">|</span> 
-                SESSION: <span id="session" class="gold">---</span>
-            </div>
+            <div>WIN RATE: <span id="winrate" class="gold">---</span></div>
+        </div>
+        
+        <div style="margin-top: 5px; text-align: right; color: #8b949e; font-size: 0.9em;">
+            MODE: <span id="mode" style="color:#c9d1d9;">---</span> | SESSION: <span id="session">---</span>
         </div>
     </div>
 
@@ -60,7 +62,7 @@ HTML_TEMPLATE = """
 
     <script>
         fetch('/data').then(r => r.json()).then(data => {
-            // Header
+            // Header Data
             document.getElementById('status').innerText = data.status || "ONLINE";
             document.getElementById('equity').innerText = "$" + data.equity;
             document.getElementById('cash').innerText = "$" + data.cash;
@@ -70,10 +72,11 @@ HTML_TEMPLATE = """
             pnlEl.innerText = (pnl > 0 ? "+" : "") + data.pnl;
             pnlEl.className = pnl >= 0 ? "green" : "red";
 
+            document.getElementById('winrate').innerText = data.win_rate || "0/0 (0%)";
             document.getElementById('mode').innerText = data.mode;
             document.getElementById('session').innerText = data.session || "WAITING";
 
-            // Live Positions
+            // Live Positions Table
             let tbody = document.querySelector("#pos-table tbody");
             tbody.innerHTML = "";
             if (data.positions && data.positions !== "NO_TRADES") {
@@ -94,9 +97,10 @@ HTML_TEMPLATE = """
                 document.getElementById('risk-report').innerText = data.risk_report.replace(/::/g, " | ");
             }
 
-            // Logs (Consolidated)
+            // Logs (Reversed so newest is at top)
             let logDiv = document.getElementById('logs');
             if (data.events) {
+                // events are joined by "||"
                 logDiv.innerHTML = data.events.split("||").reverse().join("<br>");
             }
         });
