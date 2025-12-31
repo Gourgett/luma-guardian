@@ -22,13 +22,8 @@ FLEET_CONFIG = {
     "PENGU":  {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
 
     # --- THE REINFORCEMENTS (Structural Beta) ---
-    # POPCAT: The 'Cat' version of WIF. High liquidity, clean charts.
     "POPCAT": {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
-    
-    # BRETT: The 'Pepe' of Base chain. Moves with ETH.
     "BRETT":  {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
-    
-    # SPX: The 'Cult' hedge. Moves like PENGU (Community driven).
     "SPX":    {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06}
 }
 
@@ -178,11 +173,8 @@ def main_loop():
     try:
         update_heartbeat("BOOTING")
         
-        # Priority: Railway Env Var
         address = os.environ.get("WALLET_ADDRESS")
-        
         if not address:
-            # Fallback to file for local
             try:
                 cfg = json.load(open(CONFIG_FILE))
                 address = cfg.get('wallet_address')
@@ -192,7 +184,7 @@ def main_loop():
             print("xx CRITICAL: No WALLET_ADDRESS found.")
             return
 
-        msg.send("info", "🦅 **LUMA UPDATE:** MEME FLEET DEPLOYED (6-PACK).")
+        msg.send("info", "🦅 **LUMA UPDATE:** MEME FLEET (6-PACK) + RECOVERY LOCK ($412).")
         last_history_check = 0
         cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}
         leverage_memory = {}
@@ -238,9 +230,14 @@ def main_loop():
                  time.sleep(3600)
                  continue
 
-            # --- SCALABLE STATE MACHINE ---
+            # --- SCALABLE STATE MACHINE (RECOVERY LOCK) ---
+            RECOVERY_TARGET = 412.0
             risk_mode = "STANDARD"
-            if current_roe_pct >= 5.0:
+            
+            # RULE: NO GOD MODE UNTIL $412 IS SECURED
+            if equity < RECOVERY_TARGET:
+                risk_mode = "RECOVERY"
+            elif current_roe_pct >= 5.0:
                 risk_mode = "GOD_MODE"
             
             base_margin_usd = equity * 0.11
