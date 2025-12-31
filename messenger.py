@@ -1,105 +1,46 @@
 import json
-import requests
+import os
 import time
-from config import conf 
+# We use standard requests or curl if strictly standard libs,
+# but for Termux 'requests' is usually standard or easily added.
+# If requests is missing, we use a subprocess curl for 100% compatibility.
+import subprocess
 
 class Messenger:
     def __init__(self):
-        self.hooks = conf.discord_hooks
-        # Fallback: If CFO hook is missing, send finance data to INFO channel
-        self.cfo_hook = self.hooks.get("cfo") or self.hooks.get("info")
+        print(">> Messenger (Discord) Loaded")
+        self.config_file = "server_config.json"
+        self.webhooks = self._load_webhooks()
 
-    def _send_payload(self, url, payload):
-        """Internal engine to push data to Discord"""
-        if not url: return
+    def _load_webhooks(self):
         try:
-            requests.post(url, json=payload)
+            with open(self.config_file, 'r') as f:
+                cfg = json.load(f)
+                return cfg.get('discord_webhooks', {})
+        except: return {}
+
+    def send(self, channel, message):
+        # channel: "info", "trades", or "errors"
+        url = self.webhooks.get(channel)
+        if not url: return
+        
+        # Payload
+        data = {"content": message}
+
+        try:
+            # Using curl is safer on Termux than assuming 'requests' library exists
+            subprocess.Popen([
+                "curl", "-H", "Content-Type: application/json",
+                "-d", json.dumps(data),
+                url
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception as e:
-            print(f"xx MSG FAIL: {e}")
+            print(f"xx MSG FAILED: {e}")
 
-    def send(self, channel_key, text):
-        """Legacy text sender for simple logs"""
-        url = self.hooks.get(channel_key)
-        self._send_payload(url, {"content": text})
+    def notify_trade(self, coin, side, price, size):
+        msg = f"🦅 **EXECUTED:** {side} **{coin}**\nPrice: `${price}`\nSize: `${size}`"
+        self.send("trades", msg)
 
-    def notify_trade(self, coin, signal, price, size):
-        """Sends a RICH EMBED for trading activity"""
-        url = self.hooks.get("trades")
-        if not url: return
-
-        # 1. Determine Identity (Buy/Sell/Green/Red)
-        signal = signal.upper()
-        if "BUY" in signal or "LONG" in signal:
-            color = 5763719  # GREEN (0x57F287)
-            emoji = "🟢"
-            action = "OPEN LONG"
-        elif "SELL" in signal or "SHORT" in signal:
-            color = 15548997 # RED (0xED4245)
-            emoji = "🔴"
-            action = "OPEN SHORT"
-        else:
-            color = 3447003  # BLUE
-            emoji = "🔵"
-            action = "ORDER"
-
-        # 2. Format Price
-        try:
-            if str(price).lower() == "market":
-                p_str = "Market Price"
-            else:
-                p_str = f"${float(price):,.4f}"
-        except: p_str = str(price)
-
-        # 3. Construct the Embed
-        payload = {
-            "embeds": [{
-                "title": f"{emoji} {action}: {coin}",
-                "color": color,
-                "fields": [
-                    {"name": "Entry Price", "value": p_str, "inline": True},
-                    {"name": "Position Size", "value": f"${size}", "inline": True},
-                    {"name": "Signal Type", "value": signal, "inline": True}
-                ],
-                "footer": {"text": f"Luma Cloud • {time.strftime('%H:%M:%S')}"}
-            }]
-        }
-        self._send_payload(url, payload)
-
-    def notify_financial(self, equity, pnl, active_count, mode):
-        """Sends a FINANCIAL REPORT to the CFO/Info channel"""
-        url = self.cfo_hook
-        if not url: return
-
-        # Color based on PnL (Green if profitable, Red if loss, Gray if flat)
-        if pnl > 0: color = 5763719 # Green
-        elif pnl < 0: color = 15548997 # Red
-        else: color = 9807270 # Gray
-
-        payload = {
-            "embeds": [{
-                "title": "💰 Luma Financial Report",
-                "color": color,
-                "fields": [
-                    {"name": "Total Equity", "value": f"${equity:,.2f}", "inline": True},
-                    {"name": "Session PnL", "value": f"${pnl:+.2f}", "inline": True},
-                    {"name": "Active Positions", "value": str(active_count), "inline": True},
-                    {"name": "Risk Mode", "value": mode, "inline": False}
-                ],
-                "footer": {"text": f"System Heartbeat • {time.strftime('%H:%M:%S')}"}
-            }]
-        }
-        self._send_payload(url, payload)
-        
-    def notify_error(self, error_msg):
-        """Alerts the error channel"""
-        url = self.hooks.get("errors")
-        if not url: return
-        
-        payload = {
-            "content": "@everyone ⚠️ **SYSTEM ALERT**",
-            "embeds": [{
-                "description": str(error_msg),
-                "color": 15548997 # RED
-            }]
-        }
-        self._send_payload(url, payload)
+    def notify_error(self, error):
+        msg = f"⚠️ **CRITICAL ERROR:**\n`{error}`"
+        self.send("errors", msg)
