@@ -10,17 +10,18 @@ class Messenger:
         self.webhooks = self._load_webhooks()
 
     def _load_webhooks(self):
-        # 1. Try Env Vars (Railway)
+        # 1. Try Env Vars (Your Railway Config)
         webhooks = {
-            "info": os.environ.get("WEBHOOK_INFO"),
-            "trades": os.environ.get("WEBHOOK_TRADES"),
-            "errors": os.environ.get("WEBHOOK_ERRORS")
+            "info": os.environ.get("DISCORD_INFO"),
+            "trades": os.environ.get("DISCORD_TRADES"),
+            "errors": os.environ.get("DISCORD_ERRORS")
         }
-        # If any found, return them
+        
+        # Check if they exist
         if any(webhooks.values()):
             return webhooks
 
-        # 2. Fallback to file
+        # 2. Fallback to file (for local testing)
         try:
             with open(self.config_file, 'r') as f:
                 cfg = json.load(f)
