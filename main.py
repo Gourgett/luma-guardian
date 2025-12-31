@@ -238,10 +238,16 @@ def main_loop():
         while True:
             try:
                 update_heartbeat("ALIVE")
+                # --- [FIX] INITIALIZE VARIABLES SAFELY START OF LOOP ---
+                equity = 0.0
+                cash = 0.0
+                clean_positions = []
+                open_orders = []
+                risk_mode = "BOOTING"
+                secured = []
+                
                 session_data = chronos.get_session()
                 session_name = session_data['name']
-                
-                # --- MOVED DOWN: REMOVED DAILY CHECK FROM HERE ---
 
                 if time.time() - last_history_check > 14400:
                     try:
@@ -252,10 +258,6 @@ def main_loop():
                     except: pass
 
                 history_data = cached_history_data
-                equity = 0.0
-                cash = 0.0
-                clean_positions = []
-                open_orders = []
 
                 try:
                     user_state = vision.get_user_state(address)
@@ -311,8 +313,7 @@ def main_loop():
                 max_margin_usd  = equity * 0.165
                 secured = ratchet.secured_coins
                 
-                # --- FIXED: DAILY CHECK IS NOW HERE ---
-                # Now that 'risk_mode' and 'secured' are defined, we can safely check for reset
+                # --- [FIX] DAILY CHECK NOW HAPPENS AFTER VARIABLES EXIST ---
                 if check_daily_reset():
                     update_dashboard(equity, cash, "DAILY RESET", clean_positions, risk_mode, secured, trade_event="--- DAILY STATS RESET ---", session=session_name)
                 
