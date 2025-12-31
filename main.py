@@ -59,6 +59,8 @@ def save_volume():
     try:
         with open(VOLUME_FILE, 'w') as f:
             json.dump(DAILY_STATS, f)
+            f.flush() # <--- FORCE SAVE TO DISK
+            os.fsync(f.fileno())
     except: pass
 
 DAILY_STATS = load_volume() # <--- LOAD ON STARTUP
@@ -187,8 +189,8 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
             "status": status_msg,
             "session": session,
             "win_rate": daily_stats_str,
-            "trade_history": history_str,
-            "live_activity": LIVE_ACTIVITY,
+            "trade_history": history_str, 
+            "live_activity": LIVE_ACTIVITY, 
             "positions": pos_str,
             "risk_report": "::".join(risk_report),
             "mode": mode,
@@ -233,7 +235,7 @@ except Exception as e:
 
 def main_loop():
     global STARTING_EQUITY
-    print("🦅 LUMA SINGULARITY (PERSISTENT MEMORY)")
+    print("🦅 LUMA SINGULARITY (OFF FILTER ACTIVE)")
     try:
         update_heartbeat("BOOTING")
         
@@ -248,7 +250,7 @@ def main_loop():
             print("xx CRITICAL: No WALLET_ADDRESS found.")
             return
 
-        msg.send("info", "🦅 **LUMA UPDATE:** MEMORY CORE ACTIVE (STATS SAVED).")
+        msg.send("info", "🦅 **LUMA UPDATE:** MEMORY TRIGGERS EXPANDED.")
         last_history_check = 0
         cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}
         leverage_memory = {}
@@ -343,8 +345,8 @@ def main_loop():
                 if risk_mode == "RECOVERY" or shield_active:
                     target_leverage = 5
                 
-                # --- LEVERAGE FIX: FORCE INTEGER ---
-                target_leverage = int(target_leverage) 
+                # --- INT CONVERSION FIX (Safe add-on) ---
+                target_leverage = int(target_leverage)
 
                 if coin in active_coins:
                     pass
@@ -365,7 +367,6 @@ def main_loop():
                 current_price = float(candles[-1].get('close') or candles[-1].get('c') or 0)
                 if current_price == 0: continue
                 
-                # --- LIVE ACTIVITY UPDATE ---
                 update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, session=session_name, activity_event=f"Scanning {coin} ({rules['type']})...")
 
                 pending = next((o for o in open_orders if o.get('coin') == coin), None)
@@ -426,8 +427,12 @@ def main_loop():
             ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
             if ratchet_events:
                 for event in ratchet_events:
-                    if "PROFIT" in event or "+" in event: update_stats(1)
-                    elif "LOSS" in event or "-" in event: update_stats(-1)
+                    # --- EXPANDED MEMORY TRIGGERS (THE FIX) ---
+                    # Added check for "WIN" or "GAIN" just in case wording varies
+                    if "PROFIT" in event or "+" in event or "WIN" in event or "GAIN" in event: 
+                        update_stats(1)
+                    elif "LOSS" in event or "-" in event or "LOSE" in event: 
+                        update_stats(-1)
                     
                     update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, trade_event=event, session=session_name)
             
