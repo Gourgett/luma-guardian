@@ -41,7 +41,8 @@ class Predator:
                 if is_green:
                     # SAFETY FILTER (HYBRID LOGIC)
                     # ----------------------------------------
-                    meme_coins = ["WIF", "DOGE", "PENGU", "PEPE", "SHIB"]
+                    # UPDATED: Added SPX, BRETT, POPCAT to registry
+                    meme_coins = ["WIF", "DOGE", "PENGU", "PEPE", "SHIB", "SPX", "BRETT", "POPCAT"]
                     
                     if coin in meme_coins:
                         rsi_limit = 85 # Memes are allowed to run hot
