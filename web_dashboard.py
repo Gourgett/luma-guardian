@@ -118,3 +118,24 @@ HTML_TEMPLATE = """
     </script>
 </body>
 </html>
+"""
+
+@app.route('/')
+def index():
+    return render_template_string(HTML_TEMPLATE)
+
+@app.route('/data')
+def data():
+    try:
+        with open("dashboard_state.json", "r") as f:
+            return jsonify(json.load(f))
+    except:
+        return jsonify({"status": "BOOTING...", "equity": "0.00", "cash": "0.00", "pnl": "0.00"})
+
+@app.route('/health')
+def health():
+    return jsonify({"status": "healthy"})
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
