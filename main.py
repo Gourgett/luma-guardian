@@ -9,13 +9,12 @@ from datetime import datetime, timezone
 warnings.simplefilter("ignore")
 
 # ==============================================================================
-#  LUMA SINGULARITY [PERSISTENT MEMORY /app/data]
+#  LUMA SINGULARITY [STANDARD OPERATION: PERSISTENT MEMORY]
 # ==============================================================================
 
 # --- PATH CONFIGURATION ---
 DATA_DIR = "/app/data"
 
-# Ensure the persistent directory exists
 if not os.path.exists(DATA_DIR):
     try:
         os.makedirs(DATA_DIR)
@@ -24,7 +23,6 @@ if not os.path.exists(DATA_DIR):
         print(f"xx FAILED TO CREATE DATA DIR: {e}")
 
 CONFIG_FILE = "server_config.json"
-# SAVE IMPORTANT STATE TO THE PERSISTENT VOLUME:
 ANCHOR_FILE = os.path.join(DATA_DIR, "equity_anchor.json")
 VOLUME_FILE = os.path.join(DATA_DIR, "daily_volume.json")
 BTC_TICKER = "BTC"
@@ -41,7 +39,7 @@ FLEET_CONFIG = {
 STARTING_EQUITY = 0.0
 
 # --- SEPARATED LOGGING SYSTEM ---
-TRADE_HISTORY = deque(maxlen=59) 
+TRADE_HISTORY = deque(maxlen=60) 
 LIVE_ACTIVITY = "Waiting for signal..." 
 
 # --- PERSISTENT VOLUME MEMORY ---
@@ -78,10 +76,7 @@ def save_volume():
 DAILY_STATS = load_volume() # <--- LOAD ON STARTUP
 
 def load_anchor(current_equity):
-    """
-    Loads the start equity. 
-    NOTE: If you want to force it to 412, we handle that in main_loop now.
-    """
+    """Loads the anchor. If missing, sets it to current equity."""
     try:
         if os.path.exists(ANCHOR_FILE):
             with open(ANCHOR_FILE, 'r') as f:
@@ -250,28 +245,11 @@ except Exception as e:
     sys.exit()
 
 def main_loop():
-    global STARTING_EQUITY, DAILY_STATS
-    print("🦅 LUMA SINGULARITY (PERSISTENT MEMORY /app/data)")
+    global STARTING_EQUITY
+    print("🦅 LUMA SINGULARITY (STANDARD /app/data)")
     try:
         update_heartbeat("BOOTING")
         
-        # --- 1. FORCE RESET ANCHOR TO 412.0 ---
-        try:
-            print(">> [RESET] Forcing Anchor to $412.00")
-            with open(ANCHOR_FILE, 'w') as f:
-                json.dump({"start_equity": 412.0}, f)
-            STARTING_EQUITY = 412.0
-        except Exception as e:
-            print(f"xx ANCHOR RESET FAILED: {e}")
-
-        # --- 2. FORCE RESET DAILY STATS ---
-        try:
-            print(">> [RESET] Clearing Daily Stats")
-            DAILY_STATS = {"wins": 0, "total": 0, "last_reset_day": datetime.now(timezone.utc).day}
-            save_volume()
-        except: pass
-        # --------------------------------------
-
         address = os.environ.get("WALLET_ADDRESS")
         if not address:
             try:
@@ -283,7 +261,7 @@ def main_loop():
             print("xx CRITICAL: No WALLET_ADDRESS found.")
             return
 
-        msg.send("info", "🦅 **LUMA RESET:** PNL BASE SET TO $412.00")
+        msg.send("info", "🦅 **LUMA ONLINE:** MEMORY SYSTEM ACTIVE.")
         last_history_check = 0
         cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}
         leverage_memory = {}
@@ -319,11 +297,10 @@ def main_loop():
                     open_orders = user_state.get('openOrders', [])
             except: pass
 
-            # Force load 412 if it somehow reverted (double check)
-            if STARTING_EQUITY != 412.0:
-                 STARTING_EQUITY = load_anchor(412.0)
+            if STARTING_EQUITY == 0.0 and equity > 0:
+                STARTING_EQUITY = load_anchor(equity)
             
-            current_pnl = equity - STARTING_EQUITY
+            current_pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
             start_eq_safe = STARTING_EQUITY if STARTING_EQUITY > 0 else 1.0
             current_roe_pct = (current_pnl / start_eq_safe) * 100
 
@@ -379,7 +356,7 @@ def main_loop():
                 if risk_mode == "RECOVERY" or shield_active:
                     target_leverage = 5
                 
-                # --- INT CONVERSION FIX (Safe add-on) ---
+                # --- INT CONVERSION FIX ---
                 target_leverage = int(target_leverage)
 
                 if coin in active_coins:
