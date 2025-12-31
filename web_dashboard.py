@@ -1,7 +1,6 @@
 from flask import Flask, render_template_string, jsonify
 import json
 import os
-import time
 
 app = Flask(__name__)
 
@@ -21,11 +20,6 @@ HTML_TEMPLATE = """
         .gold { color: #d29922; }
         .cyan { color: #58a6ff; }
         .header { font-size: 1.2em; font-weight: bold; border-bottom: 1px solid #30363d; padding-bottom: 10px; margin-bottom: 10px; }
-        
-        /* New Offline Animation */
-        @keyframes flash-red { 0% { background-color: #161b22; } 50% { background-color: #4a0f0f; } 100% { background-color: #161b22; } }
-        .offline { animation: flash-red 2s infinite; border: 1px solid #da3633; }
-        
         table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
         th, td { text-align: left; padding: 8px; border-bottom: 1px solid #21262d; }
         .log { font-size: 0.8em; opacity: 0.8; height: 350px; overflow-y: scroll; border: 1px solid #21262d; padding: 5px; }
@@ -35,8 +29,8 @@ HTML_TEMPLATE = """
     </style>
 </head>
 <body>
-    <div id="main-card" class="card">
-        <div class="header" id="main-title">🦅 LUMA GUARDIAN [MEME FLEET]</div>
+    <div class="card">
+        <div class="header">🦅 LUMA GUARDIAN [MEME FLEET]</div>
         <div id="status" style="font-size: 0.9em; margin-bottom: 10px;">CONNECTING...</div>
         
         <div style="margin-top: 10px; display: flex; justify-content: space-between;">
@@ -77,30 +71,7 @@ HTML_TEMPLATE = """
 
     <script>
         fetch('/data').then(r => r.json()).then(data => {
-            // --- DEAD MAN'S SWITCH LOGIC ---
-            let lastUpdate = data.updated || 0;
-            let now = Date.now() / 1000;
-            let diff = now - lastUpdate;
-            let statusEl = document.getElementById('status');
-            let mainCard = document.getElementById('main-card');
-            let mainTitle = document.getElementById('main-title');
-
-            if (diff > 30) {
-                // SYSTEM DEAD
-                statusEl.innerText = "⚠️ SYSTEM OFFLINE / STALE DATA (" + Math.round(diff) + "s ago)";
-                statusEl.style.color = "#da3633";
-                statusEl.style.fontWeight = "bold";
-                mainCard.classList.add("offline");
-                mainTitle.innerText = "🦅 LUMA GUARDIAN [CONNECTION LOST]";
-            } else {
-                // SYSTEM ALIVE
-                statusEl.innerText = data.status || "ONLINE";
-                statusEl.style.color = "#c9d1d9";
-                statusEl.style.fontWeight = "normal";
-                mainCard.classList.remove("offline");
-                mainTitle.innerText = "🦅 LUMA GUARDIAN [MEME FLEET]";
-            }
-
+            document.getElementById('status').innerText = data.status || "ONLINE";
             document.getElementById('equity').innerText = "$" + data.equity;
             document.getElementById('cash').innerText = "$" + data.cash;
             
@@ -113,8 +84,10 @@ HTML_TEMPLATE = """
             document.getElementById('mode').innerText = data.mode;
             document.getElementById('session').innerText = data.session || "WAITING";
             
+            // Live Activity Ticker
             document.getElementById('activity').innerText = data.live_activity || "Idle";
 
+            // Positions Table
             let tbody = document.querySelector("#pos-table tbody");
             tbody.innerHTML = "";
             if (data.positions && data.positions !== "NO_TRADES") {
@@ -136,6 +109,7 @@ HTML_TEMPLATE = """
                 document.getElementById('risk-report').innerText = data.risk_report.replace(/::/g, " | ");
             }
 
+            // Trade History Logs
             let logDiv = document.getElementById('logs');
             if (data.trade_history) {
                 logDiv.innerHTML = data.trade_history.split("||").reverse().join("<br>");
