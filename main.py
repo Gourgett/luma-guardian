@@ -28,8 +28,8 @@ FLEET_CONFIG = {
 STARTING_EQUITY = 0.0
 
 # --- SEPARATED LOGGING SYSTEM ---
-TRADE_HISTORY = deque(maxlen=59) 
-LIVE_ACTIVITY = "Waiting for signal..."
+TRADE_HISTORY = deque(maxlen=59) # The "Locked" Log (Wins/Losses/Opens)
+LIVE_ACTIVITY = "Waiting for signal..." # The "Line 60" Ticker
 
 DAILY_STATS = {
     "wins": 0,
@@ -88,35 +88,31 @@ def normalize_positions(raw_positions):
         except: continue
     return clean_pos
 
-# --- THE ARMORED UPDATE FUNCTION ---
-# This function accepts ANY arguments (**kwargs) and catches ANY error (try/except).
-# It is impossible for this function to crash the main loop.
-def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", secured_list=[], session="N/A", **kwargs):
+def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", secured_list=[], trade_event=None, activity_event=None, session="N/A"):
     global STARTING_EQUITY, TRADE_HISTORY, LIVE_ACTIVITY, DAILY_STATS
-    
     try:
-        # 1. Flexible Argument Handling
-        # We look for ANY of these keys in the arguments passed
-        trade_event = kwargs.get('trade_event') or kwargs.get('new_event') or kwargs.get('log')
-        activity_event = kwargs.get('activity_event')
-
         if STARTING_EQUITY == 0.0 and equity > 0:
             STARTING_EQUITY = load_anchor(equity)
         
         pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
 
+        # 1. HANDLE TRADE LOG (Permanent)
         if trade_event:
             t_str = time.strftime("[%H:%M:%S]")
-            if not str(trade_event).startswith("["):
+            if not trade_event.startswith("["):
                 final_msg = f"{t_str} {trade_event}"
             else:
                 final_msg = trade_event
             TRADE_HISTORY.append(final_msg)
         
+        # 2. HANDLE ACTIVITY LOG (Ephemeral)
         if activity_event:
+            # We don't append, we overwrite.
             LIVE_ACTIVITY = f">> {activity_event}"
 
+        # Join history with "||" for parsing
         history_str = "||".join(list(TRADE_HISTORY))
+        
         pos_str = "NO_TRADES"
         risk_report = []
 
@@ -168,8 +164,8 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
             "status": status_msg,
             "session": session,
             "win_rate": daily_stats_str,
-            "trade_history": history_str,
-            "live_activity": LIVE_ACTIVITY,
+            "trade_history": history_str, # Renamed key
+            "live_activity": LIVE_ACTIVITY, # New Key
             "positions": pos_str,
             "risk_report": "::".join(risk_report),
             "mode": mode,
@@ -178,11 +174,7 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
         temp_dash = "dashboard_state.tmp"
         with open(temp_dash, "w") as f: json.dump(data, f, ensure_ascii=False)
         os.replace(temp_dash, "dashboard_state.json")
-    
-    except Exception as e:
-        # THE SHIELD: If anything fails, we log it and RETURN.
-        # We do NOT let the exception bubble up to the main loop.
-        print(f"xx DASHBOARD SKIP: {e}")
+    except Exception as e: pass
 
 try:
     print(">> [1/10] Loading Modules...")
@@ -233,7 +225,7 @@ def main_loop():
             print("xx CRITICAL: No WALLET_ADDRESS found.")
             return
 
-        msg.send("info", "🦅 **LUMA UPDATE:** ARMORED CORE ACTIVE (Crash-Proof).")
+        msg.send("info", "🦅 **LUMA UPDATE:** SPLIT LOGS (HISTORY + LIVE ACTIVITY).")
         last_history_check = 0
         cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}
         leverage_memory = {}
@@ -243,7 +235,6 @@ def main_loop():
             session_data = chronos.get_session()
             session_name = session_data['name']
             
-            # Using trade_event logic
             if check_daily_reset():
                 update_dashboard(equity, cash, "DAILY RESET", clean_positions, risk_mode, secured, trade_event="--- DAILY STATS RESET ---", session=session_name)
 
@@ -315,7 +306,7 @@ def main_loop():
             max_margin_usd  = equity * 0.165
             secured = ratchet.secured_coins
             
-            # SAFE UPDATE
+            # Note: We do NOT pass trade_event here, only update status
             update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, session=session_name)
             
             print(f">> [{time.strftime('%H:%M:%S')}] {status_msg}", end='\r')
@@ -351,6 +342,7 @@ def main_loop():
                 if current_price == 0: continue
                 
                 # --- LIVE ACTIVITY UPDATE ---
+                # This updates the "Ticker" on the dashboard without saving to history
                 update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, session=session_name, activity_event=f"Scanning {coin} ({rules['type']})...")
 
                 pending = next((o for o in open_orders if o.get('coin') == coin), None)
@@ -362,6 +354,7 @@ def main_loop():
                             msg_txt = f"🏃 CHASING {coin} (Adjusting Trap)"
                             print(f">> {msg_txt}")
                             hands.cancel_all_orders(coin)
+                            # Log this as activity, not a trade event
                             update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, session=session_name, activity_event=msg_txt)
                             continue
                     except: continue
@@ -406,7 +399,7 @@ def main_loop():
                         hands.place_trap(coin, proposal['side'], proposal['price'], final_size)
                         msg.notify_trade(coin, proposal['source'], proposal['price'], final_size)
                         
-                        # IMPORTANT: passing trade_event here
+                        # IMPORTANT: This IS a trade event, so we send 'trade_event'
                         update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, trade_event=log_msg, session=session_name)
             
             ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
@@ -415,6 +408,7 @@ def main_loop():
                     if "PROFIT" in event or "+" in event: update_stats(1)
                     elif "LOSS" in event or "-" in event: update_stats(-1)
                     
+                    # IMPORTANT: This IS a trade event
                     update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, trade_event=event, session=session_name)
             
             time.sleep(3)
