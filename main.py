@@ -4,26 +4,27 @@ import sys
 import os
 import warnings
 from collections import deque
-from config import conf
 
 warnings.simplefilter("ignore")
 
-ANCHOR_FILE = conf.get_path("equity_anchor.json")
-BTC_TICKER = "BTC"
-SESSION_START_TIME = time.time()
+# ==============================================================================
+#  LUMA SINGULARITY [TIER: OFF HIERARCHY + MEME PRESERVATION]
+#  Logic: Princes Filtered (Strict) | Memes Untouched (Standard)
+# ==============================================================================
 
+CONFIG_FILE = "server_config.json"
+ANCHOR_FILE = "equity_anchor.json"
+BTC_TICKER = "BTC"
+
+# --- FLEET CONFIG ---
 FLEET_CONFIG = {
-    "SOL":   {"type": "PRINCE", "lev": 10, "risk_mult": 1.0, "stop_loss": 0.03},
-    "SUI":   {"type": "PRINCE", "lev": 10, "risk_mult": 1.0, "stop_loss": 0.03},
-    "ETH":   {"type": "PRINCE", "lev": 10, "risk_mult": 1.0, "stop_loss": 0.03},
-    "WIF":   {"type": "MEME",   "lev": 5,  "risk_mult": 1.0, "stop_loss": 0.05},
-    "kPEPE": {"type": "MEME",   "lev": 5,  "risk_mult": 1.0, "stop_loss": 0.05},
-    "DOGE":  {"type": "MEME",   "lev": 5,  "risk_mult": 1.0, "stop_loss": 0.05}
+    "WIF":   {"type": "MEME",   "lev": 5,  "risk_mult": 1.0, "stop_loss": 0.06},
+    "DOGE":  {"type": "MEME",   "lev": 5,  "risk_mult": 1.0, "stop_loss": 0.06},
+    "PENGU": {"type": "MEME",   "lev": 5,  "risk_mult": 1.0, "stop_loss": 0.06}
 }
 
 STARTING_EQUITY = 0.0
-EVENT_QUEUE = deque(maxlen=4)
-RADAR_CACHE = {} 
+EVENT_QUEUE = deque(maxlen=10)
 
 def load_anchor(current_equity):
     try:
@@ -35,7 +36,16 @@ def load_anchor(current_equity):
             with open(ANCHOR_FILE, 'w') as f:
                 json.dump({"start_equity": current_equity}, f)
             return current_equity
-    except: return current_equity
+    except:
+        return current_equity
+
+def update_heartbeat(status="ALIVE"):
+    try:
+        temp_file = "heartbeat.tmp"
+        with open(temp_file, "w") as f:
+            json.dump({"last_beat": time.time(), "status": status}, f)
+        os.replace(temp_file, "heartbeat.json")
+    except: pass
 
 def normalize_positions(raw_positions):
     clean_pos = []
@@ -53,26 +63,22 @@ def normalize_positions(raw_positions):
         except: continue
     return clean_pos
 
-def calculate_projection(current_pnl):
-    elapsed_hours = (time.time() - SESSION_START_TIME) / 3600
-    if elapsed_hours < 0.1: return 0.0 
-    hourly_rate = current_pnl / elapsed_hours
-    return hourly_rate * 24 * 30
-
-def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", session_name="--", secured_list=[], new_event=None):
-    global STARTING_EQUITY, EVENT_QUEUE, RADAR_CACHE
+def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", secured_list=[], new_event=None):
+    global STARTING_EQUITY, EVENT_QUEUE
     try:
-        if STARTING_EQUITY == 0.0 and equity > 0: 
+        if STARTING_EQUITY == 0.0 and equity > 0:
             STARTING_EQUITY = load_anchor(equity)
-        pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
-        proj_30d = calculate_projection(pnl)
         
+        pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
+
         if new_event:
             t = time.strftime("%H:%M:%S")
             EVENT_QUEUE.append(f"[{t}] {new_event}")
+        
         events_str = "||".join(list(EVENT_QUEUE))
-
         pos_str = "NO_TRADES"
+        risk_report = []
+
         if positions:
             pos_lines = []
             for p in positions:
@@ -81,45 +87,52 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", ses
                 entry = p['entry']
                 pnl_val = p['pnl']
                 side = "LONG" if size > 0 else "SHORT"
+
+                lev_display = FLEET_CONFIG.get(coin, {}).get('lev', 10)
+                if mode == "GOD_MODE" and FLEET_CONFIG.get(coin, {}).get('type') == "MEME":
+                    lev_display = 10
                 
-                lev = FLEET_CONFIG.get(coin, {}).get('lev', 10)
-                margin = (abs(size) * entry) / lev
+                margin = (abs(size) * entry) / lev_display
                 roe = 0.0
                 if margin > 0: roe = (pnl_val / margin) * 100
-                
-                is_secured = coin in secured_list
-                icon = "🔒" if is_secured else "" 
-                
-                # MERGED PNL DISPLAY
-                display_pnl = f"${pnl_val:.2f} ({roe:.1f}%)"
-                
-                pos_lines.append(f"{coin}|{side}|{display_pnl}|{roe:.1f}|{icon}")
-            pos_str = "::".join(pos_lines)
 
-        radar_lines = []
-        for coin, data in RADAR_CACHE.items():
-            radar_lines.append(f"{coin}|{data['price']}|{data['status']}|{data['color']}")
-        radar_str = "::".join(radar_lines)
+                is_secured = coin in secured_list
+                icon = "🔒" if is_secured else ""
+
+                if side == "LONG": target = entry * (1 + (1/lev_display))
+                else: target = entry * (1 - (1/lev_display))
+
+                if target < 1.0: t_str = f"{target:.6f}"
+                else: t_str = f"{target:.2f}"
+
+                pos_lines.append(f"{coin}|{side}|{pnl_val:.2f}|{roe:.1f}|{icon}|{t_str}")
+
+                status = "SECURED" if is_secured else "RISK ON"
+                close_at = entry if is_secured else "Stop Loss"
+                risk_report.append(f"{coin}|{side}|{margin:.2f}|{status}|{close_at}")
+
+            pos_str = "::".join(pos_lines)
         
+        if not risk_report: risk_report.append("NO_TRADES")
+
         data = {
             "equity": f"{equity:.2f}",
             "cash": f"{cash:.2f}",
             "pnl": f"{pnl:+.2f}",
-            "proj": f"{proj_30d:+.2f}",
             "status": status_msg,
             "events": events_str,
             "positions": pos_str,
-            "radar": radar_str,
+            "risk_report": "::".join(risk_report),
             "mode": mode,
-            "session": session_name,
             "updated": time.time()
         }
-        with open(conf.get_path("dashboard_state.json"), "w") as f: 
-            json.dump(data, f, ensure_ascii=False)
+        temp_dash = "dashboard_state.tmp"
+        with open(temp_dash, "w") as f: json.dump(data, f, ensure_ascii=False)
+        os.replace(temp_dash, "dashboard_state.json")
     except Exception as e: pass
 
 try:
-    print(">> LOADING MODULES...")
+    print(">> [1/10] Loading Modules...")
     from vision import Vision
     from hands import Hands
     from xenomorph import Xenomorph
@@ -131,9 +144,11 @@ try:
     from oracle import Oracle
     from seasonality import Seasonality
     from predator import Predator
-    
+
+    update_heartbeat("STARTING")
+    print(">> [2/10] Initializing Organs...")
     vision = Vision()
-    hands = Hands() # Lazy Load
+    hands = Hands()
     xeno = Xenomorph()
     whale = SmartMoney()
     ratchet = DeepSea()
@@ -143,50 +158,44 @@ try:
     oracle = Oracle()
     season = Seasonality()
     predator = Predator()
-    print(">> SYSTEM READY")
+    print(">> SYSTEM INTEGRITY: 100%")
 except Exception as e:
-    print(f"xx LOAD ERROR: {e}")
+    print(f"xx CRITICAL LOAD ERROR: {e}")
     sys.exit()
 
 def main_loop():
-    global STARTING_EQUITY, RADAR_CACHE
-    print("🦅 LUMA BOT ENGINE STARTING")
-    
-    # Init Force Update
-    update_dashboard(0, 0, "INITIALIZING...", [], "INIT", "--", [])
-    
+    global STARTING_EQUITY
+    print("🦅 LUMA SINGULARITY (OFF FILTER ACTIVE)")
     try:
-        address = conf.wallet_address
-        msg.send("info", "🦅 **LUMA:** Engine Restarted.")
-        
-        for coin, rules in FLEET_CONFIG.items():
-            try: hands.set_leverage_all([coin], leverage=rules['lev'])
-            except: pass
-            time.sleep(0.2) 
+        update_heartbeat("BOOTING")
+        try:
+            cfg = json.load(open(CONFIG_FILE))
+            address = cfg.get('wallet_address')
+        except: return
 
+        msg.send("info", "🦅 **LUMA UPDATE:** MEMES UNTOUCHED. OFF FILTER ACTIVE.")
         last_history_check = 0
         cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}
-        last_finance_report = 0 
-        
+        leverage_memory = {}
+
         while True:
+            update_heartbeat("ALIVE")
             session_data = chronos.get_session()
-            session_name = session_data['name']
-            
-            if time.time() - last_history_check > 14400: 
+
+            if time.time() - last_history_check > 14400:
                 try:
                     btc_daily = vision.get_candles(BTC_TICKER, "1d")
                     if btc_daily:
                         cached_history_data = history.check_regime(btc_daily)
                         last_history_check = time.time()
                 except: pass
+
             history_data = cached_history_data
-            
             equity = 0.0
             cash = 0.0
             clean_positions = []
-            open_orders = [] 
-            data_fetched = False
-            
+            open_orders = []
+
             try:
                 user_state = vision.get_user_state(address)
                 if user_state:
@@ -194,110 +203,135 @@ def main_loop():
                     cash = float(user_state.get('withdrawable', 0))
                     clean_positions = normalize_positions(user_state.get('assetPositions', []))
                     open_orders = user_state.get('openOrders', [])
-                    data_fetched = True 
-            except Exception as e: pass
-            
+            except: pass
+
             if STARTING_EQUITY == 0.0 and equity > 0:
                 STARTING_EQUITY = load_anchor(equity)
+            
             current_pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
-            
-            risk_mode = "AGGRESSIVE"
-            investable_pct = 0.60 
-            if current_pnl > 5.00:
+            start_eq_safe = STARTING_EQUITY if STARTING_EQUITY > 0 else 1.0
+            current_roe_pct = (current_pnl / start_eq_safe) * 100
+
+            # --- CIRCUIT BREAKER ---
+            if equity < 300.0 and equity > 1.0:
+                 print("xx CRITICAL: EQUITY BELOW $300. HALTING TRADING.")
+                 msg.send("errors", "CRITICAL: HARD FLOOR BREACHED. SHUTTING DOWN.")
+                 time.sleep(3600)
+                 continue
+
+            # --- SCALABLE STATE MACHINE ---
+            risk_mode = "STANDARD"
+            if current_roe_pct >= 5.0:
                 risk_mode = "GOD_MODE"
-                investable_pct = 0.70 
             
-            total_investable_cash = equity * investable_pct
-            prince_margin_target = total_investable_cash * 0.25
-            meme_margin_target = total_investable_cash * 0.1666
-            
+            base_margin_usd = equity * 0.11
+            max_margin_usd  = equity * 0.165
+
             secured = ratchet.secured_coins
 
-            status_msg = f"Scanning... Mode:{risk_mode}"
-            update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured)
-            print(f">> Pulse: OK", end='\r')
+            status_msg = f"Mode:{risk_mode} (ROE:{current_roe_pct:.2f}%) Cap:${max_margin_usd:.0f}"
+            update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured)
+            print(f">> [{time.strftime('%H:%M:%S')}] {status_msg}", end='\r')
 
-            if time.time() - last_finance_report > 3600:
-                try:
-                    msg.notify_financial(equity, current_pnl, len(clean_positions), risk_mode)
-                    last_finance_report = time.time()
-                except: pass
-
+            active_coins = [p['coin'] for p in clean_positions]
             for coin, rules in FLEET_CONFIG.items():
-                existing = next((p for p in clean_positions if p['coin'] == coin), None)
-                pending = next((o for o in open_orders if o.get('coin') == coin), None)
+                update_heartbeat("SCANNING")
+
+                # --- 1. SMART LEVERAGE MANAGEMENT ---
+                target_leverage = rules['lev']
+                if risk_mode == "GOD_MODE" and rules['type'] == "MEME":
+                    target_leverage = 10
                 
-                try: candles = vision.get_candles(coin, "1h") 
-                except: candles = []
-                
-                if candles:
-                    curr_p = float(candles[-1]['c'])
-                    formatted_p = f"${curr_p:.4f}"
-                    if existing:
-                        RADAR_CACHE[coin] = {"price": formatted_p, "status": "ACTIVE TRADE", "color": "blue"}
-                    elif pending:
-                        limit_px = pending.get('limitPx', '---')
-                        RADAR_CACHE[coin] = {"price": formatted_p, "status": f"🛡️ TRAP @ {limit_px}", "color": "cyan"}
-                    else:
-                        RADAR_CACHE[coin] = {"price": formatted_p, "status": "👀 SCANNING", "color": "gray"}
+                if coin in active_coins:
+                    pass
                 else:
-                    continue
+                    if leverage_memory.get(coin) != target_leverage:
+                        try:
+                            hands.set_leverage_all([coin], leverage=target_leverage)
+                            leverage_memory[coin] = target_leverage
+                        except: pass
 
-                if existing or pending: continue 
+                if ratchet.check_trauma(hands, coin): continue
+                existing = next((p for p in clean_positions if p['coin'] == coin), None)
+                if existing: continue
 
-                micro_season = season.get_multiplier(rules['type'])
-                macro_mult = session_data['aggression'] * history_data['multiplier']
-                total_mult = macro_mult * micro_season['mult']
-                if total_mult < 1.0: total_mult = 1.0
-                if total_mult > 1.0: total_mult = 1.0 
+                try: candles = vision.get_candles(coin, "1h")
+                except: candles = []
+                if not candles: continue
+                current_price = float(candles[-1].get('close') or candles[-1].get('c') or 0)
+                if current_price == 0: continue
                 
-                if rules['type'] == "PRINCE": target_margin_usd = prince_margin_target
-                else: target_margin_usd = meme_margin_target
-                
-                leverage = rules['lev']
-                final_size = target_margin_usd * leverage
-                if final_size < 60.0: final_size = 60.0
-                final_size = round(final_size, 2)
-                
-                context_str = f"Session: {session_data['name']}, Season: {micro_season['note']}"
-                predator_signal = predator.analyze_divergence(candles)
-                sm_signal = whale.hunt_turtle(candles) or whale.hunt_ghosts(candles)
-                
-                if sm_signal:
-                    if predator_signal != "EXHAUSTION_SELL" or sm_signal['side'] == "SELL":
-                         if oracle.consult(coin, sm_signal['type'], sm_signal['price'], context_str):
-                            side = sm_signal['side']
-                            if hands.place_trap(coin, side, sm_signal['price'], final_size):
-                                log = f"{coin}: {sm_signal['type']} ({risk_mode})"
-                                update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=log)
-                                msg.notify_trade(coin, f"TRAP_{side}", sm_signal['price'], final_size)
-                
-                elif xeno.hunt(coin, candles) == "ATTACK":
-                    if predator_signal == "REAL_PUMP" or predator_signal is None:
-                        if rules['type'] == "MEME" and session_data['name'] == "ASIA": pass 
-                        else:
-                            if oracle.consult(coin, "BREAKOUT_BUY", "Market", context_str):
-                                coin_size = final_size / float(candles[-1]['c'])
-                                result = hands.place_market_order(coin, "BUY", coin_size)
-                                if result is True:
-                                    log = f"{coin}: MARKET BUY ({risk_mode})"
-                                    update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=log)
-                                    msg.notify_trade(coin, "MARKET_BUY", "Market", final_size)
-                                else:
-                                    update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=f"❌ {coin}: {str(result)}")
+                pending = next((o for o in open_orders if o.get('coin') == coin), None)
+                if pending:
+                    try:
+                        order_price = float(pending.get('limitPx') or pending.get('price') or 0)
+                        gap = abs(current_price - order_price) / order_price
+                        if gap > 0.005:
+                            print(f">> 🏃 CHASING: {coin} moved away ({gap*100:.1f}%). Adjusting trap...")
+                            hands.cancel_all_orders(coin)
+                            continue
+                    except: continue
 
-            if data_fetched:
-                ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
-                if ratchet_events:
-                    for event in ratchet_events:
-                         update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, session_name, secured, new_event=event)
+                # --- 2. THE SIGNAL HIERARCHY ---
+                proposal = None
+                trend_status = predator.analyze_divergence(candles, coin)
+                season_info = season.get_multiplier(rules['type'])
+                season_mult = season_info.get('mult', 1.0)
+                context_str = f"Session: {session_data['name']}, Season: {season_info['note']}"
+                
+                whale_signal = whale.hunt_turtle(candles) or whale.hunt_ghosts(candles)
+                xeno_signal = xeno.hunt(coin, candles)
+
+                # --- A. SNIPER (MOMENTUM) ---
+                if xeno_signal == "ATTACK":
+                    # BRANCH 1: OFFS (Strict Filter + Trap)
+                    if rules['type'] == "OFF":
+                        continue
+                    
+                    # BRANCH 2: MEMES
+                    else:
+                        if trend_status == "REAL_PUMP" or trend_status is None:
+                            proposal = {
+                                "source": "SNIPER",
+                                "side": "BUY",
+                                "price": current_price * 0.999, # Market Buy
+                                "reason": "MOMENTUM_CONFIRMED"
+                            }
+
+                # --- B. WHALE (SMART MONEY) ---
+                if whale_signal:
+                    if trend_status != "REAL_PUMP":
+                        proposal = {
+                            "source": whale_signal['type'],
+                            "side": whale_signal['side'],
+                            "price": whale_signal['price'],
+                            "reason": "REVERSAL_CONFIRMED"
+                        }
+
+                if proposal:
+                    raw_margin = base_margin_usd * season_mult
+                    final_margin_usd = min(raw_margin, max_margin_usd)
+                    final_size = round(final_margin_usd * target_leverage, 2)
+
+                    if final_size < 40: final_size = 40
+
+                    if oracle.consult(coin, proposal['source'], proposal['price'], context_str):
+                        lev_tag = f"{target_leverage}x"
+                        log = f"{coin}: {proposal['source']} ({proposal['reason']}) [${final_margin_usd:.0f} Margin | {lev_tag}]"
+                        print(f"\n>> {log}")
+                        hands.place_trap(coin, proposal['side'], proposal['price'], final_size)
+                        msg.notify_trade(coin, proposal['source'], proposal['price'], final_size)
             
-            time.sleep(3) 
+            ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
+            if ratchet_events:
+                for event in ratchet_events:
+                    update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, new_event=event)
             
+            time.sleep(3)
+
     except Exception as e:
         print(f"xx CRITICAL: {e}")
-        try: msg.send("errors", f"CRASH: {e}")
-        except: pass
+        msg.send("errors", f"CRASH: {e}")
 
 if __name__ == "__main__":
     try: main_loop()
