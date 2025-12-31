@@ -16,23 +16,24 @@ CONFIG_FILE = "server_config.json"
 ANCHOR_FILE = "equity_anchor.json"
 BTC_TICKER = "BTC"
 
+# --- THE STRUCTURAL FLEET (6-PACK) ---
 FLEET_CONFIG = {
-    # --- THE VETERANS ---
+    # THE VETERANS
     "WIF":    {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
     "DOGE":   {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
     "PENGU":  {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
 
-    # --- THE REINFORCEMENTS (Structural Beta) ---
+    # THE REINFORCEMENTS (Structural Beta)
     "POPCAT": {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
     "BRETT":  {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
     "SPX":    {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06}
 }
 
 STARTING_EQUITY = 0.0
-# UPDATE: Increased memory to 60 lines for the main log
+# LOG MEMORY: 60 Events
 EVENT_QUEUE = deque(maxlen=60)
 
-# UPDATE: Daily Stats Container
+# DAILY STATS CONTAINER
 DAILY_STATS = {
     "wins": 0,
     "total": 0,
@@ -100,10 +101,9 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
         
         pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
 
-        # UPDATE: Add Timestamp to every event
         if new_event:
             t_str = time.strftime("[%H:%M:%S]")
-            # Avoid double timestamps if the event already has one
+            # Prevent double timestamps
             if not new_event.startswith("["):
                 final_msg = f"{t_str} {new_event}"
             else:
@@ -114,7 +114,7 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
         pos_str = "NO_TRADES"
         risk_report = []
 
-        # Calculate Win Rate
+        # Win Rate Calculation
         win_rate = 0
         if DAILY_STATS["total"] > 0:
             win_rate = int((DAILY_STATS["wins"] / DAILY_STATS["total"]) * 100)
@@ -162,7 +162,7 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
             "pnl": f"{pnl:+.2f}",
             "status": status_msg,
             "session": session,
-            "win_rate": daily_stats_str, # NEW FIELD
+            "win_rate": daily_stats_str,
             "events": events_str,
             "positions": pos_str,
             "risk_report": "::".join(risk_report),
@@ -223,7 +223,7 @@ def main_loop():
             print("xx CRITICAL: No WALLET_ADDRESS found.")
             return
 
-        msg.send("info", "🦅 **LUMA UPDATE:** MEME FLEET (6-PACK) + WIN RATE TRACKING.")
+        msg.send("info", "🦅 **LUMA UPDATE:** MEME FLEET + TITAN MODE (12% THRESHOLD).")
         last_history_check = 0
         cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}
         leverage_memory = {}
@@ -233,7 +233,7 @@ def main_loop():
             session_data = chronos.get_session()
             session_name = session_data['name']
             
-            # Check for midnight reset
+            # Daily Reset Check
             if check_daily_reset():
                 update_dashboard(equity, cash, "DAILY RESET", clean_positions, risk_mode, secured, new_event="--- DAILY STATS RESET ---", session=session_name)
 
@@ -274,22 +274,31 @@ def main_loop():
                  time.sleep(3600)
                  continue
 
-            # --- SCALABLE STATE MACHINE (RECOVERY LOCK) ---
+            # --- SCALABLE STATE MACHINE (TITAN UPGRADE) ---
             RECOVERY_TARGET = 412.0
+            TITAN_THRESHOLD = 12.0 # Updated to 12% (~$40 profit)
+            
             risk_mode = "STANDARD"
+            titan_active = False
+
+            # PRIORITY 1: RECOVERY LOCK
             if equity < RECOVERY_TARGET:
                 risk_mode = "RECOVERY"
+            # PRIORITY 2: GOD MODE
             elif current_roe_pct >= 5.0:
                 risk_mode = "GOD_MODE"
             
+            # THE TITAN FILTER (95% Confidence Only)
+            if current_roe_pct >= TITAN_THRESHOLD:
+                titan_active = True
+                status_msg = f"Mode:{risk_mode} (TITAN ACTIVE) | ROE:+{current_roe_pct:.2f}%"
+            else:
+                status_msg = f"Mode:{risk_mode} (ROE:{current_roe_pct:.2f}%)"
+
             base_margin_usd = equity * 0.11
             max_margin_usd  = equity * 0.165
 
             secured = ratchet.secured_coins
-
-            status_msg = f"Mode:{risk_mode} (ROE:{current_roe_pct:.2f}%) Cap:${max_margin_usd:.0f}"
-            
-            # NOTE: We pass 'None' for new_event here to avoid spamming the log every loop
             update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, session=session_name)
             
             print(f">> [{time.strftime('%H:%M:%S')}] {status_msg}", end='\r')
@@ -298,11 +307,15 @@ def main_loop():
             for coin, rules in FLEET_CONFIG.items():
                 update_heartbeat("SCANNING")
 
-                # --- 1. LEVERAGE SYNC ---
+                # --- 1. SMART LEVERAGE MANAGEMENT ---
                 target_leverage = rules['lev']
                 if risk_mode == "GOD_MODE" and rules['type'] == "MEME":
                     target_leverage = 10
                 
+                # RECOVERY OVERRIDE (Redundant check to be safe)
+                if risk_mode == "RECOVERY":
+                    target_leverage = 5
+
                 if coin in active_coins:
                     pass
                 else:
@@ -343,12 +356,23 @@ def main_loop():
                 whale_signal = whale.hunt_turtle(candles) or whale.hunt_ghosts(candles)
                 xeno_signal = xeno.hunt(coin, candles)
 
+                # --- A. SNIPER (MOMENTUM) ---
                 if xeno_signal == "ATTACK":
-                    if rules['type'] == "OFF": continue
+                    if rules['type'] == "OFF": 
+                        continue
+                    
+                    # LOGIC: If TITAN is active, we ONLY accept "REAL_PUMP" (95% Conf).
+                    is_valid_sniper = False
+                    if titan_active:
+                         if trend_status == "REAL_PUMP": is_valid_sniper = True
                     else:
-                        if trend_status == "REAL_PUMP" or trend_status is None:
-                            proposal = {"source": "SNIPER", "side": "BUY", "price": current_price * 0.999, "reason": "MOMENTUM_CONFIRMED"}
+                         if trend_status == "REAL_PUMP" or trend_status is None: is_valid_sniper = True
 
+                    if is_valid_sniper:
+                        proposal = {"source": "SNIPER", "side": "BUY", "price": current_price * 0.999, "reason": "MOMENTUM_CONFIRMED"}
+
+                # --- B. WHALE (SMART MONEY) ---
+                # Whale signals are high confidence by default, so we keep them enabled in Titan Mode.
                 if whale_signal:
                     if trend_status != "REAL_PUMP":
                         proposal = {"source": whale_signal['type'], "side": whale_signal['side'], "price": whale_signal['price'], "reason": "REVERSAL_CONFIRMED"}
@@ -363,22 +387,16 @@ def main_loop():
                         lev_tag = f"{target_leverage}x"
                         log_msg = f"OPEN {coin} ({proposal['source']}) ${final_margin_usd:.0f}"
                         print(f"\n>> {log_msg}")
-                        
                         hands.place_trap(coin, proposal['side'], proposal['price'], final_size)
                         msg.notify_trade(coin, proposal['source'], proposal['price'], final_size)
-                        
-                        # Add to dashboard log immediately
                         update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, new_event=log_msg, session=session_name)
             
             ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
             if ratchet_events:
                 for event in ratchet_events:
-                    # Parse event for Win Rate Logic
-                    # Examples: "CLOSED WIF (PROFIT) +$12.50" or "STOP LOSS WIF -$5.00"
-                    if "PROFIT" in event or "+" in event:
-                        update_stats(1) # Win
-                    elif "LOSS" in event or "-" in event:
-                        update_stats(-1) # Loss
+                    # Win Rate Logic
+                    if "PROFIT" in event or "+" in event: update_stats(1)
+                    elif "LOSS" in event or "-" in event: update_stats(-1)
                     
                     update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, new_event=event, session=session_name)
             
