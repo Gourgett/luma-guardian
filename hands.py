@@ -16,7 +16,7 @@ class Hands:
         key = os.environ.get("PRIVATE_KEY") or self.config.get('private_key') or self.config.get('secret_key')
         
         if not key:
-            raise ValueError("CRITICAL: No 'PRIVATE_KEY' found in Environment Variables or config file.")
+            raise ValueError("CRITICAL: No 'PRIVATE_KEY' found in Environment Variables.")
 
         self.account = Account.from_key(key)
         self.address = os.environ.get("WALLET_ADDRESS") or self.config.get('wallet_address')
@@ -25,7 +25,6 @@ class Hands:
         self.exchange = Exchange(self.account, constants.MAINNET_API_URL)
 
     def _load_config(self):
-        # Fallback for local testing, otherwise empty
         try:
             with open("server_config.json") as f:
                 return json.load(f)
@@ -51,22 +50,14 @@ class Hands:
             print(f"xx CLEANUP FAILED: {e}")
 
     def _get_precision(self, coin):
-        # MAP: Matches your successful Trade History exactly.
-        # Format: (Price Decimals, Size Decimals)
-        
-        # PRINCES
         if coin == "SOL":   return (2, 2)
         if coin == "SUI":   return (4, 1)
         if coin == "BTC":   return (1, 3)
         if coin == "ETH":   return (2, 3)
-
-        # MEMES
         if coin == "kPEPE": return (6, 0)
         if coin == "WIF":   return (4, 1)
         if coin == "DOGE":  return (5, 0)
         if coin == "PENGU": return (5, 0)
-        
-        # Default Fallback
         return (4, 1)
 
     def place_trap(self, coin, side, price, size_usd):
