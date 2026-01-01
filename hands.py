@@ -34,8 +34,11 @@ class Hands:
         print(f">> HANDS: Enforcing {leverage}x Leverage on Fleet...")
         for coin in coins:
             try:
-                self.exchange.update_leverage(leverage, coin)
-            except: pass
+                # The Fix: We explicitly cast to int here just to be 100% safe
+                self.exchange.update_leverage(int(leverage), coin)
+            except Exception as e:
+                # The Fix: No more silent failing. We print the error.
+                print(f"xx LEVERAGE FAILED for {coin}: {e}")
         print(">> HANDS: Leverage Synced.")
 
     def cancel_all_orders(self, coin):
