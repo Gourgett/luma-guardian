@@ -2,7 +2,7 @@ import time
 
 class DeepSea:
     def __init__(self):
-        print(">> DEEP SEA: Ratchet System Loaded (Mode: SURGICAL SCALPER | FAST LOCK)")
+        print(">> DEEP SEA: Ratchet System Loaded (Mode: ULTRA-TIGHT SCALPER)")
         self.secured_coins = []
         self.peak_roe = {}
         self.trauma_record = {}
@@ -45,25 +45,23 @@ class DeepSea:
             
             peak = self.peak_roe[coin]
 
-            # --- SURGICAL SCALPER STRATEGY ---
+            # --- ULTRA-TIGHT SCALPER STRATEGY ---
             
             # 1. DIFFERENTIAL HARD STOPS
-            # Princes: Cut losses at -4%
-            # Memes: Cut losses at -6%
             if coin_type == "PRINCE":
                 current_floor = -0.04
             else:
                 current_floor = -0.06
 
-            # 2. FAST BREAKEVEN (The "Bleed Stopper")
-            # If we hit +1.5%, lock +0.2% (Just enough to cover fees)
-            # This stops "Green trades turning Red"
-            if peak >= 0.015:
+            # 2. INSTANT BREAKEVEN (Trigger at 1%)
+            # As soon as we see +1.0%, lock +0.2% to cover fees.
+            if peak >= 0.01:
                 current_floor = 0.002
 
-            # 3. TIGHT TRAILING (The "Banker")
-            # If we hit +3%, lock +2%. Trail with a 1% gap.
-            if peak >= 0.03:
+            # 3. AGGRESSIVE TRAIL (Trigger at 2%)
+            # As soon as we see +2.0%, lock +1.0%.
+            # Then trail upwards with a 1% gap (e.g., at 3.5% peak, stop is 2.5%).
+            if peak >= 0.02:
                 current_floor = peak - 0.01
 
             # CHECK EXIT
