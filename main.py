@@ -9,12 +9,11 @@ from datetime import datetime, timezone
 warnings.simplefilter("ignore")
 
 # ==============================================================================
-#  LUMA SINGULARITY [STANDARD OPERATION: PERSISTENT MEMORY]
+#  LUMA SINGULARITY [V2.2: CALENDAR LOGGING & PERSISTENCE]
 # ==============================================================================
 
 # --- PATH CONFIGURATION ---
 DATA_DIR = "/app/data"
-
 if not os.path.exists(DATA_DIR):
     try:
         os.makedirs(DATA_DIR)
@@ -25,7 +24,6 @@ if not os.path.exists(DATA_DIR):
 CONFIG_FILE = "server_config.json"
 ANCHOR_FILE = os.path.join(DATA_DIR, "equity_anchor.json")
 VOLUME_FILE = os.path.join(DATA_DIR, "daily_volume.json")
-# NEW: Persistent Trade Log File
 HISTORY_FILE = os.path.join(DATA_DIR, "trade_logs.json")
 BTC_TICKER = "BTC"
 
@@ -42,61 +40,47 @@ STARTING_EQUITY = 0.0
 
 # --- PERSISTENT LOGGING SYSTEM ---
 def load_history():
-    """Restores the last 60 logs from the persistent volume"""
     try:
         if os.path.exists(HISTORY_FILE):
             with open(HISTORY_FILE, 'r') as f:
                 data = json.load(f)
                 return deque(data, maxlen=60)
         return deque(maxlen=60)
-    except:
-        return deque(maxlen=60)
+    except: return deque(maxlen=60)
 
 def save_history(history_deque):
-    """Writes the history to disk so it survives restarts"""
     try:
         with open(HISTORY_FILE, 'w') as f:
-            # json doesn't natively serialize deques; convert to list
             json.dump(list(history_deque), f)
     except: pass
 
 TRADE_HISTORY = load_history() 
 LIVE_ACTIVITY = "Waiting for signal..." 
 
-# --- PERSISTENT VOLUME MEMORY (STATS) ---
+# --- PERSISTENT VOLUME MEMORY ---
 def load_volume():
-    """Restores daily stats from disk on restart"""
-    default_stats = {
-        "wins": 0, 
-        "total": 0, 
-        "last_reset_day": datetime.now(timezone.utc).day
-    }
+    default_stats = {"wins": 0, "total": 0, "last_reset_day": datetime.now(timezone.utc).day}
     try:
         if os.path.exists(VOLUME_FILE):
             with open(VOLUME_FILE, 'r') as f:
                 data = json.load(f)
-                current_day = datetime.now(timezone.utc).day
-                if data.get("last_reset_day") != current_day:
+                if data.get("last_reset_day") != datetime.now(timezone.utc).day:
                     return default_stats
                 return data
         return default_stats
-    except:
-        return default_stats
+    except: return default_stats
 
 def save_volume():
-    """Saves daily stats to disk instantly"""
     global DAILY_STATS
     try:
         with open(VOLUME_FILE, 'w') as f:
             json.dump(DAILY_STATS, f)
-            f.flush()
-            os.fsync(f.fileno())
+            f.flush(); os.fsync(f.fileno())
     except: pass
 
-DAILY_STATS = load_volume() # <--- LOAD ON STARTUP
+DAILY_STATS = load_volume()
 
 def load_anchor(current_equity):
-    """Loads the anchor. If missing, sets it to current equity."""
     try:
         if os.path.exists(ANCHOR_FILE):
             with open(ANCHOR_FILE, 'r') as f:
@@ -106,8 +90,7 @@ def load_anchor(current_equity):
             with open(ANCHOR_FILE, 'w') as f:
                 json.dump({"start_equity": current_equity}, f)
             return current_equity
-    except:
-        return current_equity
+    except: return current_equity
 
 def update_heartbeat(status="ALIVE"):
     try:
@@ -122,15 +105,13 @@ def check_daily_reset():
     current_day = datetime.now(timezone.utc).day
     if current_day != DAILY_STATS["last_reset_day"]:
         DAILY_STATS = {"wins": 0, "total": 0, "last_reset_day": current_day}
-        save_volume()
-        return True
+        save_volume(); return True
     return False
 
 def update_stats(pnl_value):
     global DAILY_STATS
     DAILY_STATS["total"] += 1
-    if pnl_value > 0:
-        DAILY_STATS["wins"] += 1
+    if pnl_value > 0: DAILY_STATS["wins"] += 1
     save_volume()
 
 def normalize_positions(raw_positions):
@@ -139,11 +120,10 @@ def normalize_positions(raw_positions):
     for item in raw_positions:
         try:
             p = item['position'] if 'position' in item else item
-            coin = p.get('coin') or p.get('symbol') or p.get('asset') or "UNKNOWN"
-            if coin == "UNKNOWN": continue
-            size = float(p.get('szi') or p.get('size') or p.get('position') or 0)
+            coin = p.get('coin') or p.get('symbol') or "UNKNOWN"
+            size = float(p.get('szi') or p.get('size') or 0)
             entry = float(p.get('entryPx') or p.get('entry_price') or 0)
-            pnl = float(p.get('unrealizedPnl') or p.get('unrealized_pnl') or 0)
+            pnl = float(p.get('unrealizedPnl') or 0)
             if size == 0: continue
             clean_pos.append({"coin": coin, "size": size, "entry": entry, "pnl": pnl})
         except: continue
@@ -152,31 +132,23 @@ def normalize_positions(raw_positions):
 def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", secured_list=[], trade_event=None, activity_event=None, session="N/A"):
     global STARTING_EQUITY, TRADE_HISTORY, LIVE_ACTIVITY, DAILY_STATS
     try:
-        if STARTING_EQUITY == 0.0 and equity > 0:
-            STARTING_EQUITY = load_anchor(equity)
-        
+        if STARTING_EQUITY == 0.0 and equity > 0: STARTING_EQUITY = load_anchor(equity)
         pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
 
         if trade_event:
-            t_str = time.strftime("[%H:%M:%S]")
-            if not trade_event.startswith("["):
-                final_msg = f"{t_str} {trade_event}"
-            else:
-                final_msg = trade_event
+            # UPDATED: Added %d-%b for Date (e.g., 01-Jan)
+            t_str = time.strftime("[%d-%b %H:%M:%S]")
+            final_msg = f"{t_str} {trade_event}" if not trade_event.startswith("[") else trade_event
             TRADE_HISTORY.append(final_msg)
-            # Persistence: Save history to disk after every update
             save_history(TRADE_HISTORY) 
         
-        if activity_event:
-            LIVE_ACTIVITY = f">> {activity_event}"
+        if activity_event: LIVE_ACTIVITY = f">> {activity_event}"
 
         history_str = "||".join(list(TRADE_HISTORY))
         pos_str = "NO_TRADES"
         risk_report = []
 
-        win_rate = 0
-        if DAILY_STATS["total"] > 0:
-            win_rate = int((DAILY_STATS["wins"] / DAILY_STATS["total"]) * 100)
+        win_rate = int((DAILY_STATS["wins"] / DAILY_STATS["total"]) * 100) if DAILY_STATS["total"] > 0 else 0
         daily_stats_str = f"{DAILY_STATS['wins']}/{DAILY_STATS['total']} ({win_rate}%)"
 
         if positions:
@@ -185,14 +157,13 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
                 coin, size, entry, pnl_val = p['coin'], p['size'], p['entry'], p['pnl']
                 side = "LONG" if size > 0 else "SHORT"
                 lev_display = FLEET_CONFIG.get(coin, {}).get('lev', 10)
-                if mode == "GOD_MODE" and FLEET_CONFIG.get(coin, {}).get('type') == "MEME":
-                    lev_display = 10
+                if mode == "GOD_MODE" and FLEET_CONFIG.get(coin, {}).get('type') == "MEME": lev_display = 10
                 margin = (abs(size) * entry) / lev_display
                 roe = (pnl_val / margin) * 100 if margin > 0 else 0.0
                 icon = "🔒" if coin in secured_list else ""
                 target = entry * (1 + (1/lev_display)) if side == "LONG" else entry * (1 - (1/lev_display))
-                t_str = f"{target:.6f}" if target < 1.0 else f"{target:.2f}"
-                pos_lines.append(f"{coin}|{side}|{pnl_val:.2f}|{roe:.1f}|{icon}|{t_str}")
+                t_str_px = f"{target:.6f}" if target < 1.0 else f"{target:.2f}"
+                pos_lines.append(f"{coin}|{side}|{pnl_val:.2f}|{roe:.1f}|{icon}|{t_str_px}")
                 risk_report.append(f"{coin}|{side}|{margin:.2f}|{'SECURED' if coin in secured_list else 'RISK ON'}|{entry if coin in secured_list else 'Stop Loss'}")
             pos_str = "::".join(pos_lines)
         
@@ -208,7 +179,7 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
         temp_dash = "dashboard_state.tmp"
         with open(temp_dash, "w") as f: json.dump(data, f, ensure_ascii=False)
         os.replace(temp_dash, "dashboard_state.json")
-    except Exception as e: pass
+    except: pass
 
 try:
     print(">> [1/10] Loading Modules...")
@@ -233,7 +204,7 @@ except Exception as e:
 
 def main_loop():
     global STARTING_EQUITY
-    print("🦅 LUMA SINGULARITY (PERSISTENT MEMORY V2.1)")
+    print("🦅 LUMA SINGULARITY (PERSISTENT MEMORY V2.2)")
     try:
         update_heartbeat("BOOTING")
         address = os.environ.get("WALLET_ADDRESS")
@@ -244,7 +215,7 @@ def main_loop():
             except: pass
         if not address: return
 
-        msg.send("info", "🦅 **LUMA ONLINE:** ALL DATA STREAMS PERSISTENT.")
+        msg.send("info", "🦅 **LUMA ONLINE:** TIMESTAMPS CALIBRATED.")
         last_history_check = 0; cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}; leverage_memory = {}
 
         while True:
@@ -300,6 +271,14 @@ def main_loop():
                 if not candles: continue
                 current_price = float(candles[-1].get('close') or 0)
                 update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, session=session_name, activity_event=f"Scanning {coin}...")
+
+                pending = next((o for o in open_orders if o.get('coin') == coin), None)
+                if pending:
+                    try:
+                        order_price = float(pending.get('limitPx') or 0)
+                        if abs(current_price - order_price) / order_price > 0.005:
+                            hands.cancel_all_orders(coin); continue
+                    except: continue
 
                 proposal, trend = None, predator.analyze_divergence(candles, coin)
                 whale_sig, xeno_sig = whale.hunt_turtle(candles) or whale.hunt_ghosts(candles), xeno.hunt(coin, candles)
