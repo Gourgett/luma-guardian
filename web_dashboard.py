@@ -4,6 +4,11 @@ import os
 
 app = Flask(__name__)
 
+# --- PATH CONFIGURATION ---
+# We must match the DATA_DIR defined in main.py to see the data
+DATA_DIR = "/app/data"
+STATE_FILE = os.path.join(DATA_DIR, "dashboard_state.json")
+
 # HTML TEMPLATE
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -24,7 +29,6 @@ HTML_TEMPLATE = """
         table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
         th, td { text-align: left; padding: 8px; border-bottom: 1px solid #21262d; }
         
-        /* LOG WINDOWS */
         .ticker { 
             font-size: 0.9em; 
             color: #8b949e; 
@@ -93,6 +97,8 @@ HTML_TEMPLATE = """
 
     <script>
         fetch('/data').then(r => r.json()).then(data => {
+            if (!data || data.status === "BOOTING...") return;
+
             document.getElementById('status').innerText = data.status || "ONLINE";
             document.getElementById('equity').innerText = "$" + data.equity;
             document.getElementById('cash').innerText = "$" + data.cash;
@@ -106,10 +112,8 @@ HTML_TEMPLATE = """
             document.getElementById('mode').innerText = data.mode;
             document.getElementById('session').innerText = data.session || "WAITING";
             
-            // Live Activity One-Liner
             document.getElementById('activity').innerText = data.live_activity || "Idle";
 
-            // --- POSITIONS TABLE ---
             let tbody = document.querySelector("#pos-table tbody");
             tbody.innerHTML = "";
             if (data.positions && data.positions !== "NO_TRADES") {
@@ -131,29 +135,17 @@ HTML_TEMPLATE = """
                 document.getElementById('risk-report').innerText = data.risk_report.replace(/::/g, " | ");
             }
 
-            // --- SPLIT LOGIC ---
             if (data.trade_history) {
-                // Get all logs, newest first
                 let allLogs = data.trade_history.split("||").reverse();
-
-                // 1. TICKER (Top 3 Only)
                 let tickerDiv = document.getElementById('ticker-log');
-                let top3 = allLogs.slice(0, 3);
-                tickerDiv.innerHTML = top3.join("<br>");
+                tickerDiv.innerHTML = allLogs.slice(0, 3).join("<br>");
 
-                // 2. PERFORMANCE (Filter for CLOSED trades)
                 let closedDiv = document.getElementById('closed-log');
                 let closedTrades = allLogs.filter(line => {
                     let u = line.toUpperCase();
-                    // Keywords for completed trades
-                    return u.includes("PROFIT") || 
-                           u.includes("LOSS") || 
-                           u.includes("SECURED") || 
-                           u.includes("STOP") || 
-                           u.includes("CUT") ||
-                           u.includes("WIN") ||
-                           u.includes("LOSE") ||
-                           u.includes("GAIN");
+                    return u.includes("PROFIT") || u.includes("LOSS") || u.includes("SECURED") || 
+                           u.includes("STOP") || u.includes("CUT") || u.includes("WIN") || 
+                           u.includes("LOSE") || u.includes("GAIN");
                 });
                 
                 if (closedTrades.length > 0) {
@@ -175,17 +167,13 @@ def index():
 @app.route('/data')
 def data():
     try:
-        # Note: We look for the file in the root directory where main.py puts it
-        # If your main.py writes to a specific path, ensure this matches.
-        # Based on your last main.py, it writes to "dashboard_state.json" in root.
-        with open("dashboard_state.json", "r") as f:
-            return jsonify(json.load(f))
-    except:
+        # Load from the correct persistent data path
+        if os.path.exists(STATE_FILE):
+            with open(STATE_FILE, "r") as f:
+                return jsonify(json.load(f))
         return jsonify({"status": "BOOTING...", "equity": "0.00", "cash": "0.00", "pnl": "0.00"})
-
-@app.route('/health')
-def health():
-    return jsonify({"status": "healthy"})
+    except:
+        return jsonify({"status": "ERROR LOADING DATA", "equity": "0.00", "cash": "0.00", "pnl": "0.00"})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
