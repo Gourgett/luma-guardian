@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 warnings.simplefilter("ignore")
 
 # ==============================================================================
-#  LUMA SINGULARITY [V2.3.2 PRODUCTION: PHASE 2 LOGIC %]
+#  LUMA SINGULARITY [V2.3.3: ACTIVE MONITORING & PERSISTENCE FIX]
 # ==============================================================================
 
 DATA_DIR = "/app/data"
@@ -38,17 +38,13 @@ def save_history(history_deque):
     except: pass
 
 def calculate_logic_score(coin, session):
-    """Calculates confidence based on Elite Fingerprints (>=5% wins)"""
     try:
         if not os.path.exists(FINGERPRINT_FILE): return 0
         with open(FINGERPRINT_FILE, 'r') as f: fingerprints = json.load(f)
-        
-        if len(fingerprints) < 5: return 0 # Need base samples
-        
-        # Match current coin and session against history
+        if len(fingerprints) < 5: return 0 
         matches = [f for f in fingerprints if f['coin'] == coin and f['session'] == session]
-        score = min(len(matches) * 15, 95) # Each historical win adds 15% confidence
-        return score if score > 0 else 10 # Base 10% for standard signals
+        score = min(len(matches) * 15, 95)
+        return score if score > 0 else 10
     except: return 0
 
 def log_fingerprint(coin, pnl_pct, session):
@@ -64,6 +60,7 @@ def log_fingerprint(coin, pnl_pct, session):
 
 TRADE_HISTORY = load_history()
 DAILY_STATS = {"wins": 0, "total": 0, "last_reset_day": datetime.now(timezone.utc).day}
+LIVE_ACTIVITY = "Initializing..." # <--- RESTORED GLOBAL STATE
 
 def normalize_positions(raw_positions):
     if not raw_positions: return []
@@ -76,11 +73,15 @@ def normalize_positions(raw_positions):
     return clean
 
 def update_dashboard(equity, cash, status, pos, mode, secured_list, trade_event=None, activity_event=None, session="N/A"):
-    global TRADE_HISTORY, DAILY_STATS
+    global TRADE_HISTORY, DAILY_STATS, LIVE_ACTIVITY
     try:
         if trade_event:
             msg = f"[{time.strftime('%d-%b %H:%M:%S')}] {trade_event}"
             TRADE_HISTORY.append(msg); save_history(TRADE_HISTORY)
+        
+        # RESTORED MEMORY: Only update activity if a new event is passed
+        if activity_event:
+            LIVE_ACTIVITY = f">> {activity_event}"
         
         pos_str = "NO_TRADES"
         if pos:
@@ -91,7 +92,6 @@ def update_dashboard(equity, cash, status, pos, mode, secured_list, trade_event=
                 margin = (abs(size) * p['entry']) / lev
                 roe = (p['pnl'] / margin) * 100 if margin > 0 else 0
                 conf = calculate_logic_score(coin, session)
-                # Format: COIN|SIDE|PNL|ROE|ICON|TARGET|CONF
                 lines.append(f"{coin}|{'LONG' if size > 0 else 'SHORT'}|{p['pnl']:.2f}|{roe:.1f}|{'🔒' if coin in secured_list else ''}|0|{conf}")
             pos_str = "::".join(lines)
 
@@ -99,19 +99,18 @@ def update_dashboard(equity, cash, status, pos, mode, secured_list, trade_event=
         data = {
             "equity": f"{equity:.2f}", "cash": f"{cash:.2f}", "pnl": f"{(equity-412.0):+.2f}",
             "status": status, "mode": mode, "win_rate": f"{DAILY_STATS['wins']}/{DAILY_STATS['total']} ({wr}%)",
-            "trade_history": "||".join(list(TRADE_HISTORY)), "live_activity": activity_event or "Idle",
+            "trade_history": "||".join(list(TRADE_HISTORY)), "live_activity": LIVE_ACTIVITY,
             "positions": pos_str, "session": session, "updated": time.time()
         }
         with open(os.path.join(DATA_DIR, "dashboard_state.json"), "w") as f: json.dump(data, f)
     except: pass
 
-# --- MODULES ---
 from vision import Vision; from hands import Hands; from xenomorph import Xenomorph; from smart_money import SmartMoney
 from deep_sea import DeepSea; from messenger import Messenger; from chronos import Chronos; from predator import Predator
 v, h, x, w, r, m, c, p = Vision(), Hands(), Xenomorph(), SmartMoney(), DeepSea(), Messenger(), Chronos(), Predator()
 
 def main_loop():
-    print("🦅 LUMA SINGULARITY V2.3.2 (PHASE 2 ACTIVE)")
+    print("🦅 LUMA SINGULARITY V2.3.3 (ACTIVE MONITORING)")
     addr = os.environ.get("WALLET_ADDRESS")
     while True:
         sess = c.get_session(); sess_name = sess['name']
@@ -127,21 +126,39 @@ def main_loop():
         roe = ((eq - 412.0) / 412.0) * 100
         mode = "RECOVERY" if eq < 412.0 else ("GOD_MODE" if roe >= 5.0 else "STANDARD")
         
+        # Don't reset activity to Idle here, let it persist
         update_dashboard(eq, csh, f"Mode:{mode} | ROE:{roe:.2f}%", pos, mode, r.secured_coins, session=sess_name)
 
         active = [x['coin'] for x in pos]
         for coin, rules in FLEET_CONFIG.items():
-            if r.check_trauma(h, coin) or coin in active: continue
+            if r.check_trauma(h, coin):
+                 continue
+            
+            # NEW: VISUALIZE MONITORING
+            if coin in active:
+                update_dashboard(eq, csh, f"Mode:{mode}", pos, mode, r.secured_coins, session=sess_name, activity_event=f"Monitoring {coin} (Active)")
+                continue
+
             try: candles = v.get_candles(coin, "1h")
             except: continue
             
             px = float(candles[-1]['close'])
             update_dashboard(eq, csh, f"Mode:{mode}", pos, mode, r.secured_coins, session=sess_name, activity_event=f"Scanning {coin} (Logic: {calculate_logic_score(coin, sess_name)}%)")
 
-            # Xeno/Whale Logic here...
-            # if trade_signal:
-            #    h.place_trap(...)
-            #    update_dashboard(..., trade_event=f"OPEN {coin}")
+            # Xeno/Whale Logic...
+            prop, trend = None, p.analyze_divergence(candles, coin)
+            whale_s, xeno_s = w.hunt_turtle(candles) or w.hunt_ghosts(candles), x.hunt(coin, candles)
+            
+            if xeno_s == "ATTACK" and (mode != "RECOVERY" or trend == "REAL_PUMP"):
+                prop = {"source": "SNIPER", "side": "BUY", "px": px * 0.999}
+            if whale_s and trend != "REAL_PUMP":
+                prop = {"source": whale_s['type'], "side": whale_s['side'], "px": whale_s['price']}
+
+            if prop: # Simplified Oracle check for brevity in display
+                final_sz = max(round(min(eq * 0.11, eq * 0.165) * 5, 2), 40)
+                h.place_trap(coin, prop['side'], prop['px'], final_sz)
+                m.notify_trade(coin, prop['source'], prop['px'], final_sz)
+                update_dashboard(eq, csh, f"Mode:{mode}", pos, mode, r.secured_coins, trade_event=f"OPEN {coin} ({prop['source']})", session=sess_name)
 
         events = r.manage_positions(h, pos, FLEET_CONFIG)
         if events:
