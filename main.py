@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 warnings.simplefilter("ignore")
 
 # ==============================================================================
-#  LUMA SINGULARITY [GHOST SILENCER & CONFIDENCE FIX]
+#  LUMA SINGULARITY [V3.6: GHOST SILENCER, CONFIDENCE FIX & HISTORY SCORE]
 # ==============================================================================
 
 # --- PATH CONFIGURATION ---
@@ -428,8 +428,23 @@ def main_loop():
             
             if ratchet_events:
                 for event in ratchet_events:
+                    # --- NEW: INJECT SCORE INTO CLOSE LOG ---
+                    # Logic: We parse the coin name from the event string, look up its original score,
+                    # and append it to the log message so it shows in history.
+                    try:
+                        # Event format is usually "💰 TAG: COIN (PNL...)"
+                        if ":" in event:
+                            # Extract "WIF" from " WIF (+12.00...)"
+                            coin_name = event.split(":")[1].strip().split(" ")[0]
+                            
+                            # Fetch the score from memory
+                            if coin_name in TRADE_SCORES:
+                                end_score = int(TRADE_SCORES[coin_name])
+                                event = f"{event} [Score:{end_score}]"
+                    except: pass
+                    # ----------------------------------------
+
                     # --- RECORD SELF-KILL ---
-                    # If we just closed a trade, mark the timestamp so we don't 'Detect Close' it later.
                     try:
                         coin_name = event.split(":")[1].split("(")[0].strip() if ":" in event else ""
                         if coin_name: recently_closed[coin_name] = time.time()
@@ -437,6 +452,7 @@ def main_loop():
 
                     if any(x in event for x in ["PROFIT", "+", "WIN", "GAIN"]): update_stats(1)
                     elif any(x in event for x in ["LOSS", "-", "LOSE"]): update_stats(-1)
+                    
                     update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, trade_event=event, session=session_name)
             
             time.sleep(3)
