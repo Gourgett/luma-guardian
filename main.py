@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 warnings.simplefilter("ignore")
 
 # ==============================================================================
-#  LUMA SINGULARITY [V2.8: SCALABLE RISK MATH]
+#  LUMA SINGULARITY [RESTORED STABLE CORE]
 # ==============================================================================
 
 # --- PATH CONFIGURATION ---
@@ -24,7 +24,7 @@ HISTORY_FILE = os.path.join(DATA_DIR, "trade_logs.json")
 SCORES_FILE = os.path.join(DATA_DIR, "active_scores.json")
 BTC_TICKER = "BTC"
 
-# --- CONFIG: 4% HARD STOPS ---
+# --- CONFIGURATION (Standard) ---
 FLEET_CONFIG = {
     "WIF":    {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.04},
     "DOGE":   {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.04},
@@ -36,9 +36,8 @@ FLEET_CONFIG = {
 
 STARTING_EQUITY = 0.0
 
-# --- PERSISTENT LOGGING SYSTEM ---
+# --- HISTORY FIX (Prevents Data Deletion) ---
 def load_history():
-    """Always reads the PHYSICAL FILE from disk."""
     try:
         if os.path.exists(HISTORY_FILE):
             with open(HISTORY_FILE, 'r') as f:
@@ -94,7 +93,7 @@ def save_scores():
 
 load_scores()
 
-# --- PERSISTENT VOLUME MEMORY ---
+# --- VOLUME MEMORY ---
 def load_volume():
     default_stats = {"wins": 0, "total": 0, "last_reset_day": datetime.now(timezone.utc).day}
     try:
@@ -181,6 +180,7 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
             final_msg = f"{t_str} {trade_event}" if not trade_event.startswith("[") else trade_event
             save_history(final_msg)
         
+        # DASHBOARD FIX: Read from Disk to prevent vanishing logs
         DISPLAY_HISTORY = load_history()
 
         if activity_event: LIVE_ACTIVITY = f">> {activity_event}"
@@ -275,7 +275,7 @@ except Exception as e:
 
 def main_loop():
     global STARTING_EQUITY
-    print("🦅 LUMA SINGULARITY (V2.8: SCALABLE RISK)")
+    print("🦅 LUMA SINGULARITY [RESTORED]")
     try:
         update_heartbeat("BOOTING")
         update_dashboard(0, 0, "SYSTEM BOOTING...", [], "STANDARD", [], activity_event="Connecting...")
@@ -289,10 +289,12 @@ def main_loop():
         
         if not address: return
 
-        msg.send("info", "🦅 **LUMA ONLINE:** SCALABLE RISK LOGIC ACTIVE.")
+        msg.send("info", "🦅 **LUMA ONLINE:** SYSTEM RESTORED.")
         last_history_check = 0; cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}; leverage_memory = {}
         
-        known_positions = {} 
+        known_positions = {}
+        # Simple throttle memory to prevent machine-gunning
+        last_action_time = {}
 
         while True:
             update_heartbeat("ALIVE")
@@ -320,6 +322,7 @@ def main_loop():
                     api_success = True
             except: pass
             
+            # --- DASHBOARD FIX: No API = No Update (Prevents vanishing) ---
             if not api_success:
                  time.sleep(1); continue
 
@@ -337,12 +340,12 @@ def main_loop():
                 elif current_roe_pct >= 5.0: risk_mode = "GOD_MODE"
 
             current_coins = [p['coin'] for p in clean_positions]
-            manual_close_event = None
             
+            # --- MANUAL CLOSE DETECTION FIX ---
+            manual_close_event = None
             for k_coin in list(known_positions.keys()):
                 if k_coin not in current_coins:
                     manual_close_event = f"🕵️ DETECTED CLOSE: {k_coin}"
-
             known_positions = {p['coin']: p for p in clean_positions}
 
             update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, trade_event=manual_close_event, session=session_name)
@@ -351,8 +354,8 @@ def main_loop():
 
             active_coins = [p['coin'] for p in clean_positions]
             
-            # --- 1. WALLET EDGING CEILING (Max Allowed) ---
-            wallet_edging_max = (equity * 0.70) / 6
+            # --- WALLET EDGING CAP (70% / 6) ---
+            wallet_edging_cap = (equity * 0.70) / 6
 
             for coin, rules in FLEET_CONFIG.items():
                 update_heartbeat("SCANNING")
@@ -363,6 +366,12 @@ def main_loop():
                     except: pass
 
                 if ratchet.check_trauma(hands, coin) or next((p for p in clean_positions if p['coin'] == coin), None): continue
+                
+                # --- ANTI-STACKING (SIMPLE THROTTLE) ---
+                # No complex flags. Just checks if we touched this coin in last 30s.
+                if time.time() - last_action_time.get(coin, 0) < 30:
+                    continue
+
                 try: candles = vision.get_candles(coin, "1h")
                 except: candles = []
                 if not candles: continue
@@ -388,25 +397,15 @@ def main_loop():
                 if proposal:
                     logic_score = calculate_logic_score(coin, candles, session_name, regime)
                     
-                    # --- 2. SCALABLE RISK MATH (The Percentage Fix) ---
-                    # Step A: How much $ are we willing to lose? (1% of Equity)
-                    risk_allowance_usd = equity * 0.01
+                    # --- EXECUTION LOGIC (SIMPLE) ---
+                    # 1. Standard Risk
+                    base_size = equity * 0.11 * season.get_multiplier(rules['type']).get('mult', 1.0)
                     
-                    # Step B: Stop Loss Distance (e.g., 0.04 for 4%)
-                    stop_dist = rules['stop_loss']
+                    # 2. Wallet Edging Cap (Safety)
+                    # We simply clip the margin so it never exceeds your Tier 1 limit.
+                    final_margin_usd = min(base_size, wallet_edging_cap)
                     
-                    # Step C: Max Position Size to hit that Risk Amount
-                    # Example: $3.35 risk / 0.04 stop = $83.75 Size
-                    max_size_usd = risk_allowance_usd / stop_dist
-                    
-                    # Step D: Margin Needed for that Size
-                    margin_needed = max_size_usd / target_lev
-                    
-                    # Step E: Apply Wallet Edging Ceiling (Scalable Cap)
-                    # We pick the LOWER of the two.
-                    final_margin_usd = min(margin_needed, wallet_edging_max)
-                    
-                    # Safety Min
+                    # 3. Minimum Check
                     final_margin_usd = max(final_margin_usd, 10.0)
                     
                     final_sz_notional = final_margin_usd * target_lev
@@ -414,7 +413,12 @@ def main_loop():
 
                     if oracle.consult(coin, proposal['source'], proposal['price'], f"Session: {session_name}"):
                         msg_txt = f"OPEN {coin} ({proposal['source']}) Margin:${final_margin_usd:.0f} [Score:{logic_score}]"
+                        
                         hands.place_trap(coin, proposal['side'], proposal['price'], final_sz)
+                        
+                        # Set Throttle (Prevents machine-gunning for 30s)
+                        last_action_time[coin] = time.time()
+                        
                         msg.notify_trade(coin, proposal['source'], proposal['price'], final_sz)
                         TRADE_SCORES[coin] = logic_score
                         save_scores()
