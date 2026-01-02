@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 warnings.simplefilter("ignore")
 
 # ==============================================================================
-#  LUMA SINGULARITY [V2.3: STRICT SIZING + STRICT EXITS]
+#  LUMA SINGULARITY [V2.3: STABLE DASHBOARD FIX]
 # ==============================================================================
 
 # --- PATH CONFIGURATION ---
@@ -56,7 +56,7 @@ def save_history(history_deque):
     except: pass
 
 TRADE_HISTORY = load_history()
-LIVE_ACTIVITY = "Waiting for signal..."
+LIVE_ACTIVITY = "System Booting..."
 
 # --- SCORE PERSISTENCE ---
 TRADE_SCORES = {}
@@ -204,6 +204,9 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
         os.replace(temp_dash, "dashboard_state.json")
     except: pass
 
+# --- FORCE DASHBOARD FLUSH (FIXES STUCK "RESTORING" TEXT) ---
+update_dashboard(0, 0, "SYSTEM BOOTING...", [], "STANDARD", [], activity_event="System Initializing...")
+
 # --- LOGIC SCORE ENGINE (Safe Implementation) ---
 def calculate_logic_score(coin, candles, session, regime):
     """Calculates 0-100 Confidence Score based on Evolution Data Points"""
@@ -212,6 +215,8 @@ def calculate_logic_score(coin, candles, session, regime):
         # 1. Trend Angle (Slope of last 4 candles)
         if len(candles) >= 4:
             closes = [float(c.get('close') or c.get('c')) for c in candles[-4:]]
+            # Safety Check: Prevent Zero Division
+            if closes[0] == 0: return 50
             slope = (closes[-1] - closes[0]) / closes[0]
             if slope > 0.02: score += 15  # Strong Bull
             elif slope > 0.005: score += 5 
@@ -229,7 +234,7 @@ def calculate_logic_score(coin, candles, session, regime):
         if len(candles) >= 2:
             curr_rng = float(candles[-1]['high']) - float(candles[-1]['low'])
             prev_rng = float(candles[-2]['high']) - float(candles[-2]['low'])
-            if curr_rng > prev_rng * 1.5: score += 5
+            if prev_rng > 0 and curr_rng > prev_rng * 1.5: score += 5
             
     except: pass
     return min(max(int(score), 0), 100)
@@ -257,7 +262,7 @@ except Exception as e:
 
 def main_loop():
     global STARTING_EQUITY
-    print("🦅 LUMA SINGULARITY (V2.3: STRICT SIZING/EXITS)")
+    print("🦅 LUMA SINGULARITY (V2.3: STABLE)")
     try:
         update_heartbeat("BOOTING")
         address = os.environ.get("WALLET_ADDRESS")
@@ -268,7 +273,10 @@ def main_loop():
             except: pass
         if not address: return
 
-        msg.send("info", "🦅 **LUMA ONLINE:** SIZING LOCKED. RATCHET LOCKED.")
+        # Force Update again to confirm API Connection phase
+        update_dashboard(0, 0, "CONNECTING TO EXCHANGE...", [], "STANDARD", [], activity_event="Verifying Keys...")
+        
+        msg.send("info", "🦅 **LUMA ONLINE:** EVOLUTION ACTIVE. DASHBOARD FLUSHED.")
         last_history_check = 0; cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}; leverage_memory = {}
 
         while True:
@@ -351,8 +359,7 @@ def main_loop():
                     base_sz = min(equity * 0.11 * season.get_multiplier(rules['type']).get('mult', 1.0), equity * 0.165)
                     final_sz_usd = base_sz
 
-                    # Feature: RISK SHIELD ONLY
-                    # We REMOVED the 1.5x boost. We ONLY keep the 0.5x cut for safety.
+                    # Feature: RISK SHIELD ONLY (No Boost, only Safety Cuts)
                     if logic_score < 30: final_sz_usd = final_sz_usd * 0.5
                     
                     final_sz = max(round(final_sz_usd * target_lev, 2), 40)
@@ -368,8 +375,7 @@ def main_loop():
                         
                         update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, trade_event=msg_txt, session=session_name)
 
-            # --- RATCHET MANAGEMENT (STRICT) ---
-            # Using the standard FLEET_CONFIG ensures the DeepSea Surgical Scalper (1% Lock) is respected.
+            # --- RATCHET MANAGEMENT (STRICT 1% LOCK) ---
             ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
             
             if ratchet_events:
