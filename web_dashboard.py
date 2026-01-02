@@ -4,7 +4,7 @@ import os
 
 app = Flask(__name__)
 
-# HTML TEMPLATE (V2.3: EVOLUTION COMPATIBLE)
+# --- PAGE 1: COMMAND CENTER (Streamlined) ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -15,41 +15,23 @@ HTML_TEMPLATE = """
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: monospace; padding: 20px; }
         .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 15px; margin-bottom: 20px; }
-        .green { color: #2ea043; }
-        .red { color: #da3633; }
-        .gold { color: #d29922; }
-        .cyan { color: #58a6ff; }
+        .green { color: #2ea043; } .red { color: #da3633; } .gold { color: #d29922; } .cyan { color: #58a6ff; }
         .header { font-size: 1.2em; font-weight: bold; border-bottom: 1px solid #30363d; padding-bottom: 10px; margin-bottom: 10px; }
-        
         table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
         th, td { text-align: left; padding: 8px; border-bottom: 1px solid #21262d; font-size: 0.9em; }
+        .btn { background: #238636; color: white; padding: 5px 10px; text-decoration: none; border-radius: 4px; font-size: 0.8em; }
+        .btn:hover { background: #2ea043; }
         
-        /* LOG WINDOWS */
-        .ticker { 
-            font-size: 0.9em; 
-            color: #8b949e; 
-            border: 1px dashed #30363d; 
-            padding: 8px; 
-            margin-bottom: 20px;
-            background-color: #0d1117;
-        }
-        
-        .log { 
-            font-size: 0.8em; 
-            opacity: 0.9; 
-            height: 350px; 
-            overflow-y: scroll; 
-            border: 1px solid #21262d; 
-            padding: 5px; 
-        }
-
+        .ticker { font-size: 0.9em; color: #8b949e; border: 1px dashed #30363d; padding: 8px; background-color: #0d1117; min-height: 120px; }
         a { color: inherit; text-decoration: none; border-bottom: 1px dotted #8b949e; }
-        a:hover { color: #58a6ff; border-bottom: 1px solid #58a6ff; }
     </style>
 </head>
 <body>
     <div class="card">
-        <div class="header">🦅 LUMA GUARDIAN [V2.3 LIVE]</div>
+        <div class="header" style="display:flex; justify-content:space-between;">
+            <span>🦅 LUMA GUARDIAN [V3.1 FOCUSED]</span>
+            <a href="/history" target="_blank" class="btn">📜 PERFORMANCE VAULT</a>
+        </div>
         <div id="status" style="font-size: 0.9em; margin-bottom: 10px;">CONNECTING...</div>
         
         <div style="margin-top: 10px; display: flex; justify-content: space-between;">
@@ -71,12 +53,7 @@ HTML_TEMPLATE = """
         <div class="header">⚡ ACTIVE POSITIONS</div>
         <table id="pos-table">
             <thead>
-                <tr>
-                    <th>COIN</th>
-                    <th>SIDE</th>
-                    <th>PNL</th>
-                    <th>ROE</th>
-                    <th>CONF%</th> </tr>
+                <tr> <th>COIN</th> <th>SIDE</th> <th>PNL</th> <th>ROE</th> <th>CONF%</th> </tr>
             </thead>
             <tbody></tbody>
         </table>
@@ -84,24 +61,14 @@ HTML_TEMPLATE = """
     </div>
 
     <div class="card">
-        <div class="header">🤖 SYSTEM ACTIVITY (TICKER)</div>
-        <div style="margin-bottom: 10px;">
-            >> <span id="activity" class="cyan">Initializing...</span>
-        </div>
-        <div id="ticker-log" class="ticker">
-            Waiting for updates...
-        </div>
-
-        <div class="header">📜 PERFORMANCE HISTORY (PERSISTENT)</div>
-        <div id="closed-log" class="log">
-            <div style="padding:10px; text-align:center;">Loading History...</div>
-        </div>
+        <div class="header">🤖 SYSTEM ACTIVITY (LIVE)</div>
+        <div style="margin-bottom: 10px;"> >> <span id="activity" class="cyan">Initializing...</span> </div>
+        <div id="ticker-log" class="ticker"> Waiting for updates... </div>
     </div>
 
     <script>
         function updateDashboard() {
             fetch('/data').then(r => r.json()).then(data => {
-                // 1. HEADER METRICS
                 document.getElementById('status').innerText = data.status || "ONLINE";
                 document.getElementById('equity').innerText = "$" + data.equity;
                 document.getElementById('cash').innerText = "$" + data.cash;
@@ -116,7 +83,6 @@ HTML_TEMPLATE = """
                 document.getElementById('session').innerText = data.session || "WAITING";
                 document.getElementById('activity').innerText = data.live_activity || "Idle";
 
-                // 2. POSITIONS TABLE (Now handles 7 columns)
                 let tbody = document.querySelector("#pos-table tbody");
                 tbody.innerHTML = "";
                 
@@ -124,60 +90,62 @@ HTML_TEMPLATE = """
                     let rows = data.positions.split("::");
                     rows.forEach(row => {
                         let parts = row.split("|");
-                        // Format: COIN|SIDE|PNL|ROE|ICON|TARGET|SCORE
                         if (parts.length >= 4) {
-                            let coinName = parts[0];
                             let tr = document.createElement("tr");
                             let color = parseFloat(parts[2]) >= 0 ? "green" : "red";
                             let icon = parts[4] || ""; 
-                            let link = `<a href="https://app.hyperliquid.xyz/trade/${coinName}" target="_blank">${icon} ${coinName}</a>`;
-                            let score = parts[6] || "---"; // Safe fallback if score missing
-                            
+                            let link = `<a href="https://app.hyperliquid.xyz/trade/${parts[0]}" target="_blank">${icon} ${parts[0]}</a>`;
+                            let score = parts[6] || "---"; 
                             tr.innerHTML = `<td>${link}</td><td>${parts[1]}</td><td class="${color}">$${parts[2]}</td><td class="${color}">${parts[3]}%</td><td class="gold">${score}</td>`;
                             tbody.appendChild(tr);
                         }
                     });
-                } else {
-                    tbody.innerHTML = "<tr><td colspan='5' style='text-align:center; color:#555;'>NO ACTIVE TRADES</td></tr>";
-                }
+                } else { tbody.innerHTML = "<tr><td colspan='5' style='text-align:center; color:#555;'>NO ACTIVE TRADES</td></tr>"; }
 
-                if (data.risk_report) {
-                    document.getElementById('risk-report').innerText = data.risk_report.replace(/::/g, " | ");
-                }
+                if (data.risk_report) document.getElementById('risk-report').innerText = data.risk_report.replace(/::/g, " | ");
 
-                // 3. LOGIC SPLIT (TICKER vs HISTORY)
                 if (data.trade_history) {
                     let allLogs = data.trade_history.split("||").reverse();
-                    
-                    // Top 3 for Ticker
                     let tickerDiv = document.getElementById('ticker-log');
-                    let top3 = allLogs.slice(0, 3);
-                    tickerDiv.innerHTML = top3.join("<br>");
-                    
-                    // Filter for Performance Box
-                    let closedDiv = document.getElementById('closed-log');
-                    let closedTrades = allLogs.filter(line => {
-                        let u = line.toUpperCase();
-                        return u.includes("PROFIT") || u.includes("LOSS") || u.includes("SECURED") || 
-                               u.includes("STOP") || u.includes("CUT") || u.includes("WIN") || u.includes("LOSE");
-                    });
-                    
-                    if (closedTrades.length > 0) {
-                        closedDiv.innerHTML = closedTrades.join("<br>");
-                    } else {
-                        closedDiv.innerHTML = "<div style='text-align:center; padding:10px; color:#555;'>NO CLOSED TRADES YET</div>";
-                    }
+                    tickerDiv.innerHTML = allLogs.slice(0, 6).join("<br>");
                 }
-            }).catch(err => {
-                console.error("Dashboard Fetch Error:", err);
-                document.getElementById('status').innerText = "VISUAL CONNECTION LOST";
-            });
+            }).catch(err => { document.getElementById('status').innerText = "VISUAL CONNECTION LOST"; });
         }
-
-        // Run immediately and then every 2 seconds
         updateDashboard();
         setInterval(updateDashboard, 2000);
     </script>
+</body>
+</html>
+"""
+
+# --- PAGE 2: THE VAULT (Filtered Performance Only) ---
+HISTORY_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>LUMA PERFORMANCE</title>
+    <style>
+        body { background-color: #0d1117; color: #c9d1d9; font-family: monospace; padding: 20px; }
+        .log-entry { border-bottom: 1px solid #30363d; padding: 10px; font-size: 1.0em; display: flex; align-items: center;}
+        .green { color: #2ea043; border-left: 4px solid #2ea043; background: #0f1e13; } 
+        .red { color: #da3633; border-left: 4px solid #da3633; background: #241010; }
+        h1 { border-bottom: 2px solid #30363d; padding-bottom: 10px; margin-bottom: 20px; }
+        .btn { background: #1f6feb; color: white; padding: 5px 15px; text-decoration: none; border-radius: 4px; font-size: 0.8em; }
+    </style>
+</head>
+<body>
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h1>📜 CLOSED TRADES (RESULTS ONLY)</h1>
+        <a href="/" class="btn">BACK TO COMMAND</a>
+    </div>
+    
+    <div style="margin-bottom: 20px; color: #8b949e; font-size: 0.9em;">
+        Filtering for: PROFIT, LOSS, SECURED, STOP, CUT. (Open orders hidden).
+    </div>
+
+    <div id="content">
+        {{ content | safe }}
+    </div>
 </body>
 </html>
 """
@@ -186,14 +154,46 @@ HTML_TEMPLATE = """
 def index():
     return render_template_string(HTML_TEMPLATE)
 
+@app.route('/history')
+def history():
+    try:
+        archive_path = "/app/data/luma_archive.txt"
+        if os.path.exists(archive_path):
+            with open(archive_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            
+            formatted = []
+            for line in reversed(lines):
+                u = line.upper()
+                
+                # --- STRICT FILTER ---
+                # Only allow lines that are definitely about CLOSING a trade.
+                # This removes "OPEN", "Scanning", "Connected", etc.
+                if any(x in u for x in ["PROFIT", "LOSS", "SECURED", "WIN", "LOSE", "STOP", "CUT"]):
+                    
+                    # Determine Color
+                    color = "green" if ("PROFIT" in u or "WIN" in u or "GAIN" in u or "SECURED" in u) else "red"
+                    
+                    # Clean up the line for display (optional, removes extra brackets if needed)
+                    clean_line = line.strip()
+                    
+                    formatted.append(f"<div class='log-entry {color}'>{clean_line}</div>")
+            
+            if not formatted:
+                return render_template_string(HISTORY_TEMPLATE, content="<div style='padding:20px; color:#8b949e;'>NO CLOSED TRADES FOUND YET.</div>")
+
+            return render_template_string(HISTORY_TEMPLATE, content="".join(formatted))
+        else:
+            return render_template_string(HISTORY_TEMPLATE, content="<div style='padding:20px; color:#8b949e;'>NO ARCHIVE DATA FOUND YET.</div>")
+    except Exception as e:
+        return f"ERROR LOADING ARCHIVE: {e}"
+
 @app.route('/data')
 def data():
     try:
-        # Reads the JSON generated by main.py
         with open("dashboard_state.json", "r") as f:
             return jsonify(json.load(f))
     except:
-        # Fallback if file is being written or missing
         return jsonify({"status": "RESTORING VISUALS...", "equity": "0.00", "cash": "0.00", "pnl": "0.00"})
 
 @app.route('/health')
