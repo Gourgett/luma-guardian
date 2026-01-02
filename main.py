@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 warnings.simplefilter("ignore")
 
 # ==============================================================================
-#  LUMA SINGULARITY [V2.3: DUST SWEEPER FIX]
+#  LUMA SINGULARITY [V2.4: WALLET FORTRESS & MEMORY FIX]
 # ==============================================================================
 
 # --- PATH CONFIGURATION ---
@@ -35,22 +35,46 @@ FLEET_CONFIG = {
 
 STARTING_EQUITY = 0.0
 
-# --- PERSISTENT LOGGING SYSTEM ---
+# --- PERSISTENT LOGGING SYSTEM (FIXED) ---
 def load_history():
     try:
         if os.path.exists(HISTORY_FILE):
             with open(HISTORY_FILE, 'r') as f:
                 data = json.load(f)
-                return deque(data, maxlen=60)
+                if isinstance(data, list):
+                    return deque(data, maxlen=60)
         return deque(maxlen=60)
     except: return deque(maxlen=60)
 
-def save_history(history_deque):
+def save_history(new_event=None):
+    # READ-MODIFY-WRITE Strategy to prevent data deletion
     try:
+        current_data = []
+        if os.path.exists(HISTORY_FILE):
+            with open(HISTORY_FILE, 'r') as f:
+                try: current_data = json.load(f)
+                except: current_data = []
+        
+        if not isinstance(current_data, list): current_data = []
+        
+        # Add new event if exists
+        if new_event:
+            current_data.append(new_event)
+            
+        # Trim to last 60
+        if len(current_data) > 60:
+            current_data = current_data[-60:]
+            
         with open(HISTORY_FILE, 'w') as f:
-            json.dump(list(history_deque), f)
-    except: pass
+            json.dump(current_data, f)
+            f.flush(); os.fsync(f.fileno())
+            
+        return deque(current_data, maxlen=60)
+    except Exception as e: 
+        print(f"xx HISTORY SAVE FAILED: {e}")
+        return deque(maxlen=60)
 
+# Initialize History
 TRADE_HISTORY = load_history()
 LIVE_ACTIVITY = "System Initializing..."
 
@@ -130,9 +154,6 @@ def update_stats(pnl_value):
     save_volume()
 
 def normalize_positions(raw_positions):
-    """
-    Standardizes position data and filters out 'Dust' (Ghost Trades).
-    """
     clean_pos = []
     if not raw_positions: return []
     for item in raw_positions:
@@ -142,9 +163,6 @@ def normalize_positions(raw_positions):
             if coin == "UNKNOWN": continue
             
             size = float(p.get('szi') or p.get('size') or 0)
-            
-            # --- DUST SWEEPER FIX ---
-            # If size is tiny (e.g. 0.000001), treat it as closed.
             if abs(size) < 0.0001: continue 
 
             entry = float(p.get('entryPx') or p.get('entry_price') or 0)
@@ -163,8 +181,12 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
         if trade_event:
             t_str = time.strftime("[%d-%b %H:%M:%S]")
             final_msg = f"{t_str} {trade_event}" if not trade_event.startswith("[") else trade_event
-            TRADE_HISTORY.append(final_msg)
-            save_history(TRADE_HISTORY)
+            # USE NEW SAVE FUNCTION
+            TRADE_HISTORY = save_history(final_msg)
+        
+        # RELOAD IF EMPTY (Persistence Check)
+        if not TRADE_HISTORY:
+            TRADE_HISTORY = load_history()
 
         if activity_event: LIVE_ACTIVITY = f">> {activity_event}"
 
@@ -211,17 +233,16 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
 
 # --- LOGIC SCORE ENGINE ---
 def calculate_logic_score(coin, candles, session, regime):
-    """Calculates 0-100 Confidence Score based on Evolution Data Points"""
     score = 50.0 
     try:
-        # 1. Trend Angle (Slope of last 4 candles)
+        # 1. Trend Angle
         if len(candles) >= 4:
             closes = [float(c.get('close') or c.get('c')) for c in candles[-4:]]
             if closes[0] == 0: return 50
             slope = (closes[-1] - closes[0]) / closes[0]
-            if slope > 0.02: score += 15  # Strong Bull
+            if slope > 0.02: score += 15  
             elif slope > 0.005: score += 5 
-            elif slope < -0.01: score -= 15 # Bear Drag
+            elif slope < -0.01: score -= 15
 
         # 2. Session ID
         if "LONDON" in session or "NEW_YORK" in session: score += 10
@@ -263,11 +284,9 @@ except Exception as e:
 
 def main_loop():
     global STARTING_EQUITY
-    print("🦅 LUMA SINGULARITY (V2.3: DUST CLEANER)")
+    print("🦅 LUMA SINGULARITY (V2.4: WALLET FORTRESS)")
     try:
         update_heartbeat("BOOTING")
-        
-        # Flush Dashboard to clear "Restoring Visuals"
         update_dashboard(0, 0, "SYSTEM BOOTING...", [], "STANDARD", [], activity_event="Connecting...")
         
         address = os.environ.get("WALLET_ADDRESS")
@@ -279,7 +298,7 @@ def main_loop():
         
         if not address: return
 
-        msg.send("info", "🦅 **LUMA ONLINE:** GHOST TRADES CLEARED.")
+        msg.send("info", "🦅 **LUMA ONLINE:** WALLET FORTRESS ACTIVE.")
         last_history_check = 0; cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}; leverage_memory = {}
 
         while True:
@@ -324,6 +343,12 @@ def main_loop():
             print(f">> [{time.strftime('%H:%M:%S')}] {status_msg}", end='\r')
 
             active_coins = [p['coin'] for p in clean_positions]
+            
+            # --- 1. CALCULATE WALLET EDGING CAP (HARD LIMIT) ---
+            # Rule: 70% of Equity divided by 6 Bots.
+            wallet_edging_cap = (equity * 0.70) / 6
+            # ---------------------------------------------------
+
             for coin, rules in FLEET_CONFIG.items():
                 update_heartbeat("SCANNING")
                 target_lev = 10 if risk_mode == "GOD_MODE" and rules['type'] == "MEME" else (5 if risk_mode == "RECOVERY" or shield_active else rules['lev'])
@@ -356,30 +381,39 @@ def main_loop():
                     proposal = {"source": whale_sig['type'], "side": whale_sig['side'], "price": whale_sig['price']}
 
                 if proposal:
-                    # --- EVOLUTION: CALCULATE LOGIC SCORE ---
                     logic_score = calculate_logic_score(coin, candles, session_name, regime)
                     
-                    base_sz = min(equity * 0.11 * season.get_multiplier(rules['type']).get('mult', 1.0), equity * 0.165)
-                    final_sz_usd = base_sz
-
-                    # Feature: RISK SHIELD ONLY (No Boost, only Safety Cuts)
-                    if logic_score < 30: final_sz_usd = final_sz_usd * 0.5
+                    # --- 2. APPLY WALLET EDGING LOGIC ---
+                    # We take the SMALLER of:
+                    # A) The Standard Risk size (11% of equity)
+                    # B) The Wallet Edging Cap ($39 for $336 equity)
                     
-                    final_sz = max(round(final_sz_usd * target_lev, 2), 40)
+                    standard_risk = equity * 0.11 * season.get_multiplier(rules['type']).get('mult', 1.0)
+                    
+                    # The FINAL MARGIN used must not exceed the Cap
+                    base_margin_usd = min(standard_risk, wallet_edging_cap)
+
+                    if logic_score < 30: base_margin_usd = base_margin_usd * 0.5
+                    
+                    # Ensure minimum trade size is met ($5 margin min to avoid errors)
+                    final_margin_usd = max(base_margin_usd, 10.0) 
+                    
+                    # Convert Margin to Notional Size (Size = Margin * Leverage)
+                    final_sz_notional = final_margin_usd * target_lev
+                    final_sz = round(final_sz_notional, 2)
+                    # ------------------------------------
 
                     if oracle.consult(coin, proposal['source'], proposal['price'], f"Session: {session_name}"):
-                        msg_txt = f"OPEN {coin} ({proposal['source']}) ${final_sz_usd:.0f} [Score:{logic_score}]"
+                        msg_txt = f"OPEN {coin} ({proposal['source']}) Margin:${final_margin_usd:.0f} [Score:{logic_score}]"
                         
                         hands.place_trap(coin, proposal['side'], proposal['price'], final_sz)
                         msg.notify_trade(coin, proposal['source'], proposal['price'], final_sz)
                         
-                        # Save Score for display
                         TRADE_SCORES[coin] = logic_score
                         save_scores()
                         
                         update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, trade_event=msg_txt, session=session_name)
             
-            # --- RATCHET MANAGEMENT (STRICT 1% LOCK) ---
             ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
             
             if ratchet_events:
