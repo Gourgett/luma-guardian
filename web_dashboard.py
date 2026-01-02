@@ -1,6 +1,7 @@
 from flask import Flask, render_template_string, jsonify
 import json
 import os
+import re  # <--- NEW: Imported for smarter text pattern matching
 
 app = Flask(__name__)
 
@@ -29,7 +30,7 @@ HTML_TEMPLATE = """
 <body>
     <div class="card">
         <div class="header" style="display:flex; justify-content:space-between;">
-            <span>🦅 LUMA GUARDIAN [V3.1 FOCUSED]</span>
+            <span>🦅 LUMA GUARDIAN [V3.2 SMART PNL]</span>
             <a href="/history" target="_blank" class="btn">📜 PERFORMANCE VAULT</a>
         </div>
         <div id="status" style="font-size: 0.9em; margin-bottom: 10px;">CONNECTING...</div>
@@ -118,7 +119,7 @@ HTML_TEMPLATE = """
 </html>
 """
 
-# --- PAGE 2: THE VAULT (Filtered Performance Only) ---
+# --- PAGE 2: THE VAULT (Filtered & Correctly Colored) ---
 HISTORY_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -168,13 +169,31 @@ def history():
                 
                 # --- STRICT FILTER ---
                 # Only allow lines that are definitely about CLOSING a trade.
-                # This removes "OPEN", "Scanning", "Connected", etc.
                 if any(x in u for x in ["PROFIT", "LOSS", "SECURED", "WIN", "LOSE", "STOP", "CUT"]):
                     
-                    # Determine Color
-                    color = "green" if ("PROFIT" in u or "WIN" in u or "GAIN" in u or "SECURED" in u) else "red"
+                    # --- NEW: SMART COLOR LOGIC (PNL SIGN DETECTION) ---
+                    color = "green" # Default to green
                     
-                    # Clean up the line for display (optional, removes extra brackets if needed)
+                    # 1. Try to detect negative PnL from the "(+X.XX | X.X%)" part
+                    try:
+                        # Regex to find the PnL value just after the opening parenthesis
+                        # Looks for: ( followed by optional + or -, then digits/dots, then |
+                        match = re.search(r'\(([+-]?\d*\.?\d+)\s*\|', line)
+                        if match:
+                            pnl_str = match.group(1)
+                            # If the number starts with '-', it's a loss -> RED
+                            if pnl_str.startswith('-'):
+                                color = "red"
+                        else:
+                            # 2. Fallback: If no standard PnL format is found, check for negative keywords
+                            if any(x in u for x in ["LOSS", "LOSE", "CUT", "STOP"]):
+                                color = "red"
+                    except:
+                         # Safety fallback in case regex crashes
+                         if any(x in u for x in ["LOSS", "LOSE", "CUT", "STOP"]):
+                            color = "red"
+                    
+                    # Clean up the line for display
                     clean_line = line.strip()
                     
                     formatted.append(f"<div class='log-entry {color}'>{clean_line}</div>")
