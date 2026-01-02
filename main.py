@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 warnings.simplefilter("ignore")
 
 # ==============================================================================
-#  LUMA SINGULARITY [V3.2: RECEIPT VERIFICATION & WALLET EDGING]
+#  LUMA SINGULARITY [V3.3: ORDER RETENTION FIX]
 # ==============================================================================
 
 # --- PATH CONFIGURATION ---
@@ -274,7 +274,7 @@ except Exception as e:
 
 def main_loop():
     global STARTING_EQUITY
-    print("🦅 LUMA SINGULARITY [V3.2: RECEIPT VERIFICATION]")
+    print("🦅 LUMA SINGULARITY [V3.3: ORDER RETENTION FIX]")
     try:
         update_heartbeat("BOOTING")
         update_dashboard(0, 0, "SYSTEM BOOTING...", [], "STANDARD", [], activity_event="Connecting...")
@@ -288,7 +288,7 @@ def main_loop():
         
         if not address: return
 
-        msg.send("info", "🦅 **LUMA ONLINE:** EXCHANGE VERIFICATION ACTIVE.")
+        msg.send("info", "🦅 **LUMA ONLINE:** ORDER RETENTION ACTIVE.")
         last_history_check = 0; cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}; leverage_memory = {}
         
         known_positions = {}
@@ -348,8 +348,6 @@ def main_loop():
             print(f">> [{time.strftime('%H:%M:%S')}] {status_msg}", end='\r')
 
             active_coins = [p['coin'] for p in clean_positions]
-            
-            # --- 1. WALLET EDGING CEILING (Max Allowed) ---
             wallet_edging_cap = (equity * 0.70) / 6
 
             for coin, rules in FLEET_CONFIG.items():
@@ -362,21 +360,25 @@ def main_loop():
 
                 if ratchet.check_trauma(hands, coin) or next((p for p in clean_positions if p['coin'] == coin), None): continue
                 
-                # --- NO TIMER ---
-                # Pure exchange verification is used in the Execution Block below.
-
                 try: candles = vision.get_candles(coin, "1h")
                 except: candles = []
                 if not candles: continue
                 current_price = float(candles[-1].get('close') or 0)
                 update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, session=session_name, activity_event=f"Scanning {coin}...")
 
+                # --- ORDER RETENTION LOGIC (FIXED) ---
                 pending = next((o for o in open_orders if o.get('coin') == coin), None)
                 if pending:
                     try:
                         order_price = float(pending.get('limitPx') or 0)
+                        # If price moved significantly, cancel to Replace (Chase)
                         if abs(current_price - order_price) / order_price > 0.005:
-                            hands.cancel_all_orders(coin); continue
+                            hands.cancel_all_orders(coin)
+                            # Fall through to place NEW order
+                        else:
+                            # Order is GOOD. Skip this coin.
+                            update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, session=session_name, activity_event=f"Pending {coin} (Waiting)...")
+                            continue 
                     except: continue
 
                 proposal, trend = None, predator.analyze_divergence(candles, coin)
@@ -390,15 +392,8 @@ def main_loop():
                 if proposal:
                     logic_score = calculate_logic_score(coin, candles, session_name, regime)
                     
-                    # --- EXECUTION LOGIC (SIMPLE & SCALABLE) ---
-                    # 1. Standard Risk
                     base_size = equity * 0.11 * season.get_multiplier(rules['type']).get('mult', 1.0)
-                    
-                    # 2. Wallet Edging Cap (Safety)
-                    # We simply clip the margin so it never exceeds your Tier 1 limit.
                     final_margin_usd = min(base_size, wallet_edging_cap)
-                    
-                    # 3. Minimum Check
                     final_margin_usd = max(final_margin_usd, 10.0)
                     
                     final_sz_notional = final_margin_usd * target_lev
@@ -407,15 +402,12 @@ def main_loop():
                     if oracle.consult(coin, proposal['source'], proposal['price'], f"Session: {session_name}"):
                         msg_txt = f"OPEN {coin} ({proposal['source']}) Margin:${final_margin_usd:.0f} [Score:{logic_score}]"
                         
-                        # --- CRITICAL FIX: RECEIPT VERIFICATION ---
-                        # Only log if Hands returns True (Exchange Accepted Order)
                         if hands.place_trap(coin, proposal['side'], proposal['price'], final_sz):
                             msg.notify_trade(coin, proposal['source'], proposal['price'], final_sz)
                             TRADE_SCORES[coin] = logic_score
                             save_scores()
                             update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, trade_event=msg_txt, session=session_name)
                         else:
-                            # Silently fail or debug print, but DO NOT log to dashboard
                             print(f"xx LOG ABORTED: Order failed for {coin}")
             
             ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
