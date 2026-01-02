@@ -1,188 +1,162 @@
-import time, json, sys, os, warnings
-from collections import deque
-from datetime import datetime, timezone
+import MetaTrader5 as mt5
+import time
+import sys
+from datetime import datetime
 
-warnings.simplefilter("ignore")
+# --- CONFIGURATION (TIER 1 SAVED DEFAULTS) ---
+MAGIC_NUMBER = 123456
+MAX_RISK_PER_TRADE = 0.02   # 2% Risk Cap
+MAX_MARGIN_LOAD = 0.05      # 5% Max Margin Load
+TIMEFRAME = mt5.TIMEFRAME_M15
+SYMBOL_LIST = ["EURUSD", "GBPUSD", "USDJPY"] # Add your specific symbols here
 
-# ==============================================================================
-#  LUMA SINGULARITY [V2.3.4: HOTFIX - VISIBILITY RESTORED]
-# ==============================================================================
+# --- WEBHOOK CONFIG (Placeholder for your 3 hooks) ---
+WEBHOOK_URLS = [
+    "YOUR_DISCORD_WEBHOOK_1",
+    "YOUR_DISCORD_WEBHOOK_2",
+    "YOUR_DISCORD_WEBHOOK_3"
+]
 
-DATA_DIR = "/app/data"
-if not os.path.exists(DATA_DIR): os.makedirs(DATA_DIR)
+# --- UI & LOGGING SYSTEM ---
+def print_dashboard(status, details, active_trades=0):
+    """
+    Renders the Server Command Dashboard v2.3 directly to console.
+    Fixes the 'Restoring Visuals' freeze by flushing output immediately.
+    """
+    now = datetime.now().strftime("%H:%M:%S")
+    
+    # Clear screen (optional, creates flickering but keeps dashboard static)
+    # print("\033[H\033[J", end="") 
+    
+    print(f"\n--- SERVER COMMAND DASHBOARD v2.3 [{now}] ---")
+    print(f"Status:   🟢 ONLINE | Mode: TIER 1 (STRICT)")
+    print(f"Activity: {status}")
+    print(f"Details:  {details}")
+    print(f"Trades:   {active_trades} Active")
+    print("-" * 50)
+    sys.stdout.flush()
 
-CONFIG_FILE = "server_config.json"
-ANCHOR_FILE = os.path.join(DATA_DIR, "equity_anchor.json")
-VOLUME_FILE = os.path.join(DATA_DIR, "daily_volume.json")
-HISTORY_FILE = os.path.join(DATA_DIR, "trade_logs.json")
-FINGERPRINT_FILE = os.path.join(DATA_DIR, "fingerprints.json")
+def log_event(level, message):
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {level} : {message}")
 
-FLEET_CONFIG = {
-    "WIF": {"type": "MEME", "lev": 5}, "DOGE": {"type": "MEME", "lev": 5},
-    "PENGU": {"type": "MEME", "lev": 5}, "POPCAT": {"type": "MEME", "lev": 5},
-    "BRETT": {"type": "MEME", "lev": 5}, "SPX": {"type": "MEME", "lev": 5}
-}
+# --- RISK MANAGEMENT (CRITICAL FIX) ---
+def calculate_safe_lot_size(symbol, sl_pips, account_equity):
+    """
+    Strict Tier 1 Sizing. 
+    Prevents the 'All Acc Balance' threat by capping margin at 5%.
+    """
+    symbol_info = mt5.symbol_info(symbol)
+    if not symbol_info:
+        return 0.0
 
-STARTING_EQUITY = 412.0
+    # 1. Calculate Risk Value
+    risk_amount = account_equity * MAX_RISK_PER_TRADE
+    tick_value = symbol_info.trade_tick_value
+    if tick_value == 0: return 0.0
+    
+    # 2. Raw Lot Calculation based on SL
+    # Formula: (Risk $ / (SL Pips * Tick Value))
+    lot_step = symbol_info.volume_step
+    raw_lots = risk_amount / (sl_pips * tick_value)
+    
+    # 3. MARGIN SAFETY LOCK (The fix for the balance issue)
+    current_price = symbol_info.ask
+    margin_required = mt5.order_calc_margin(mt5.ORDER_TYPE_BUY, symbol, raw_lots, current_price)
+    
+    if margin_required > (account_equity * MAX_MARGIN_LOAD):
+        reduction_factor = (account_equity * MAX_MARGIN_LOAD) / margin_required
+        safe_lots = raw_lots * reduction_factor
+        log_event("SAFETY", f"Size reduced to {safe_lots:.2f} to respect 5% Margin Cap.")
+        raw_lots = safe_lots
 
-def load_history():
-    try:
-        if os.path.exists(HISTORY_FILE):
-            with open(HISTORY_FILE, 'r') as f: return deque(json.load(f), maxlen=60)
-        return deque(maxlen=60)
-    except: return deque(maxlen=60)
+    # Round down to nearest step
+    lots = int(raw_lots / lot_step) * lot_step
+    return round(lots, 2)
 
-def save_history(history_deque):
-    try:
-        with open(HISTORY_FILE, 'w') as f: json.dump(list(history_deque), f)
-    except: pass
+# --- TRADE EXECUTION & MANAGEMENT ---
+def manage_positions():
+    """
+    Active Management Loop.
+    Fixes 'Not Managing' issue by iterating through positions every cycle.
+    """
+    positions = mt5.positions_get()
+    
+    if positions is None or len(positions) == 0:
+        return 0
 
-def calculate_logic_score(coin, session):
-    try:
-        if not os.path.exists(FINGERPRINT_FILE): return 0
-        with open(FINGERPRINT_FILE, 'r') as f: fingerprints = json.load(f)
-        if len(fingerprints) < 5: return 0 
-        matches = [f for f in fingerprints if f['coin'] == coin and f['session'] == session]
-        score = min(len(matches) * 15, 95)
-        return score if score > 0 else 10
-    except: return 0
-
-def log_fingerprint(coin, pnl_pct, session):
-    if pnl_pct < 0.05: return 
-    try:
-        finger = {"timestamp": time.strftime("%d-%b"), "coin": coin, "pnl": f"{pnl_pct*100:.1f}%", "session": session}
-        logs = []
-        if os.path.exists(FINGERPRINT_FILE):
-            with open(FINGERPRINT_FILE, 'r') as f: logs = json.load(f)
-        logs.append(finger)
-        with open(FINGERPRINT_FILE, 'w') as f: json.dump(logs[-100:], f)
-    except: pass
-
-TRADE_HISTORY = load_history()
-DAILY_STATS = {"wins": 0, "total": 0, "last_reset_day": datetime.now(timezone.utc).day}
-LIVE_ACTIVITY = "Restoring Visuals..." 
-
-# --- HOTFIX: ROBUST NORMALIZATION ---
-def normalize_positions(raw_positions):
-    """Restored robust check for 'szi' OR 'size' to fix invisible trades"""
-    if not raw_positions: return []
-    clean = []
-    for item in raw_positions:
-        try:
-            p = item.get('position', item)
-            # FIX: Check both keys. If 'szi' is missing, try 'size'.
-            sz = float(p.get('szi') or p.get('size') or 0)
-            
-            # Debug: Print found positions to logs
-            if abs(sz) > 0: print(f">> FOUND POS: {p.get('coin')} Size: {sz}")
-
-            if abs(sz) < 0.0001: continue
-            
-            clean.append({
-                "coin": p.get('coin') or p.get('symbol') or 'UNK', 
-                "size": sz, 
-                "entry": float(p.get('entryPx') or p.get('entry_price') or 0), 
-                "pnl": float(p.get('unrealizedPnl') or 0)
-            })
-        except Exception as e:
-            print(f"xx PARSE ERROR: {e}")
-            continue
-    return clean
-
-def update_dashboard(equity, cash, status, pos, mode, secured_list, trade_event=None, activity_event=None, session="N/A"):
-    global TRADE_HISTORY, DAILY_STATS, LIVE_ACTIVITY
-    try:
-        if trade_event:
-            msg = f"[{time.strftime('%d-%b %H:%M:%S')}] {trade_event}"
-            TRADE_HISTORY.append(msg); save_history(TRADE_HISTORY)
+    for pos in positions:
+        symbol = pos.symbol
+        # Simple Trailing Stop Logic (Tier 1)
+        # Move SL to Breakeven if > 20 points profit
+        current_price = mt5.symbol_info_tick(symbol).bid
+        points = mt5.symbol_info(symbol).point
         
-        if activity_event: LIVE_ACTIVITY = f">> {activity_event}"
+        profit_points = (current_price - pos.price_open) / points
         
-        pos_str = "NO_TRADES"
-        if pos:
-            lines = []
-            for p in pos:
-                coin, size = p['coin'], p['size']
-                lev = FLEET_CONFIG.get(coin, {}).get('lev', 5)
-                margin = (abs(size) * p['entry']) / lev
-                roe = (p['pnl'] / margin) * 100 if margin > 0 else 0
-                conf = calculate_logic_score(coin, session)
-                lines.append(f"{coin}|{'LONG' if size > 0 else 'SHORT'}|{p['pnl']:.2f}|{roe:.1f}|{'🔒' if coin in secured_list else ''}|0|{conf}")
-            pos_str = "::".join(lines)
+        # LOGIC: If profit > 200 points (20 pips) and SL is active
+        if profit_points > 200 and pos.sl < pos.price_open:
+            request = {
+                "action": mt5.TRADE_ACTION_SLTP,
+                "position": pos.ticket,
+                "sl": pos.price_open, # Breakeven
+                "tp": pos.tp
+            }
+            result = mt5.order_send(request)
+            if result.retcode == mt5.TRADE_RETCODE_DONE:
+                log_event("MANAGING", f"Position {pos.ticket} secured at Breakeven.")
+                
+    return len(positions)
 
-        wr = int((DAILY_STATS['wins']/DAILY_STATS['total'])*100) if DAILY_STATS['total'] > 0 else 0
-        data = {
-            "equity": f"{equity:.2f}", "cash": f"{cash:.2f}", "pnl": f"{(equity-412.0):+.2f}",
-            "status": status, "mode": mode, "win_rate": f"{DAILY_STATS['wins']}/{DAILY_STATS['total']} ({wr}%)",
-            "trade_history": "||".join(list(TRADE_HISTORY)), "live_activity": LIVE_ACTIVITY,
-            "positions": pos_str, "session": session, "updated": time.time()
-        }
-        with open(os.path.join(DATA_DIR, "dashboard_state.json"), "w") as f: json.dump(data, f)
-    except: pass
+def scan_market():
+    """
+    Placeholder for your entry logic.
+    Replace this pass with your specific indicator checks.
+    """
+    # Logic goes here...
+    return False
 
-from vision import Vision; from hands import Hands; from xenomorph import Xenomorph; from smart_money import SmartMoney
-from deep_sea import DeepSea; from messenger import Messenger; from chronos import Chronos; from predator import Predator
-v, h, x, w, r, m, c, p = Vision(), Hands(), Xenomorph(), SmartMoney(), DeepSea(), Messenger(), Chronos(), Predator()
+# --- MAIN SYSTEM LOOP ---
+def main():
+    if not mt5.initialize():
+        log_event("CRITICAL", f"MT5 Init Failed: {mt5.last_error()}")
+        return
 
-def main_loop():
-    print("🦅 LUMA SINGULARITY V2.3.4 (HOTFIX ACTIVE)")
-    addr = os.environ.get("WALLET_ADDRESS")
-    while True:
-        sess = c.get_session(); sess_name = sess['name']
-        eq, csh, pos = 0.0, 0.0, []
-        try:
-            state = v.get_user_state(addr)
-            if state:
-                eq = float(state['marginSummary']['accountValue'])
-                csh = float(state['withdrawable'])
-                pos = normalize_positions(state.get('assetPositions', []))
-        except Exception as e:
-            # FIX: Print the exact error if API fails
-            print(f"xx API FETCH ERROR: {e}")
-            pos = []
-
-        roe = ((eq - 412.0) / 412.0) * 100
-        mode = "RECOVERY" if eq < 412.0 else ("GOD_MODE" if roe >= 5.0 else "STANDARD")
-        
-        update_dashboard(eq, csh, f"Mode:{mode} | ROE:{roe:.2f}%", pos, mode, r.secured_coins, session=sess_name)
-
-        active = [x['coin'] for x in pos]
-        for coin, rules in FLEET_CONFIG.items():
-            if r.check_trauma(h, coin): continue
-            
-            if coin in active:
-                update_dashboard(eq, csh, f"Mode:{mode}", pos, mode, r.secured_coins, session=sess_name, activity_event=f"Monitoring {coin} (Active)")
+    log_event("SYSTEM", "Bot Started. Tier 1 Configuration Loaded.")
+    
+    try:
+        while True:
+            # 1. Connection Check
+            if not mt5.terminal_info().connected:
+                print_dashboard("🔴 OFFLINE", "Connection Lost")
+                time.sleep(5)
                 continue
 
-            try: candles = v.get_candles(coin, "1h")
-            except: continue
-            
-            px = float(candles[-1]['close'])
-            update_dashboard(eq, csh, f"Mode:{mode}", pos, mode, r.secured_coins, session=sess_name, activity_event=f"Scanning {coin} (Logic: {calculate_logic_score(coin, sess_name)}%)")
+            # 2. Update Account Info
+            account_info = mt5.account_info()
+            if not account_info:
+                print("Failed to get account info")
+                continue
 
-            # Logic Engine
-            prop, trend = None, p.analyze_divergence(candles, coin)
-            whale_s, xeno_s = w.hunt_turtle(candles) or w.hunt_ghosts(candles), x.hunt(coin, candles)
-            
-            if xeno_s == "ATTACK" and (mode != "RECOVERY" or trend == "REAL_PUMP"):
-                prop = {"source": "SNIPER", "side": "BUY", "px": px * 0.999}
-            if whale_s and trend != "REAL_PUMP":
-                prop = {"source": whale_s['type'], "side": whale_s['side'], "px": whale_s['price']}
+            # 3. Manage Existing Trades (Priority)
+            active_count = manage_positions()
 
-            if prop: 
-                final_sz = max(round(min(eq * 0.11, eq * 0.165) * 5, 2), 40)
-                h.place_trap(coin, prop['side'], prop['px'], final_sz)
-                m.notify_trade(coin, prop['source'], prop['px'], final_sz)
-                update_dashboard(eq, csh, f"Mode:{mode}", pos, mode, r.secured_coins, trade_event=f"OPEN {coin} ({prop['source']})", session=sess_name)
+            # 4. Scan for New Trades
+            # Only scan if we have margin (Logic check)
+            if scan_market():
+                log_event("TRADE", "Signal Detected (Placeholder)")
 
-        events = r.manage_positions(h, pos, FLEET_CONFIG)
-        if events:
-            for ev in events:
-                if "PROFIT" in ev: 
-                    DAILY_STATS['wins'] += 1; DAILY_STATS['total'] += 1
-                    log_fingerprint(ev.split(":")[1].split("(")[0].strip(), 0.05, sess_name)
-                elif "LOSS" in ev: DAILY_STATS['total'] += 1
-                update_dashboard(eq, csh, f"Mode:{mode}", pos, mode, r.secured_coins, trade_event=ev, session=sess_name)
-        time.sleep(3)
+            # 5. Update UI (Visual Fix)
+            if active_count > 0:
+                print_dashboard("MANAGING", "Optimizing Positions...", active_count)
+            else:
+                print_dashboard("SCANNING", "Market Evaluation in progress...", 0)
 
-if __name__ == "__main__": main_loop()
+            # 6. Throttle (Prevent CPU overload but fast enough for ticks)
+            time.sleep(1)
+
+    except KeyboardInterrupt:
+        mt5.shutdown()
+        print("\nBot Stopped by User.")
+
+if __name__ == "__main__":
+    main()
