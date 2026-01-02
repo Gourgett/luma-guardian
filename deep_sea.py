@@ -2,7 +2,7 @@ import time
 
 class DeepSea:
     def __init__(self):
-        print(">> DEEP SEA: Ratchet System Loaded (Mode: SLIPPAGE ARMOR)")
+        print(">> DEEP SEA: Ratchet System Loaded (Mode: AGGRESSIVE JUMP)")
         self.secured_coins = []
         self.peak_roe = {}
         self.trauma_record = {}
@@ -45,7 +45,7 @@ class DeepSea:
 
             peak = self.peak_roe[coin]
 
-            # --- SLIPPAGE ARMOR STRATEGY ---
+            # --- AGGRESSIVE JUMP STRATEGY ---
 
             # 1. DIFFERENTIAL HARD STOPS
             if coin_type == "PRINCE":
@@ -53,16 +53,18 @@ class DeepSea:
             else:
                 current_floor = -0.06
 
-            # 2. ARMORED BREAKEVEN (Trigger at 1.5%)
-            # We wait for 1.5% to ensure the move is real.
-            # We lock 0.4% to absorb slippage (0.1% profit + 0.3% buffer).
-            if peak >= 0.015:
-                current_floor = 0.004 
+            # 2. EARLY BREAKEVEN (Trigger at 1.0%)
+            # Logic: Lock 0.2% immediately to cover fees.
+            if peak >= 0.01:
+                current_floor = 0.002 
 
-            # 3. AGGRESSIVE TRAIL (Trigger at 2.0%)
-            # As requested: "Trail at 1% directly from 2% up"
+            # 3. THE "JUMP" TRAIL (Trigger at 2.0%)
+            # Logic: If we hit 2%, we force the stop to 1.5%.
+            # We maintain this 1.5% floor until the "1% Gap" naturally catches up
+            # (which happens at 2.5% peak). Then we trail with the 1% gap.
             if peak >= 0.02:
-                current_floor = peak - 0.01
+                # Math: Choose the higher of (1.5%) OR (Peak - 1%)
+                current_floor = max(0.015, peak - 0.01)
 
             # CHECK EXIT
             if roe < current_floor:
