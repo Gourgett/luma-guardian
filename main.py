@@ -1,162 +1,386 @@
-import MetaTrader5 as mt5
 import time
+import json
 import sys
-from datetime import datetime
+import os
+import warnings
+from collections import deque
+from datetime import datetime, timezone
 
-# --- CONFIGURATION (TIER 1 SAVED DEFAULTS) ---
-MAGIC_NUMBER = 123456
-MAX_RISK_PER_TRADE = 0.02   # 2% Risk Cap
-MAX_MARGIN_LOAD = 0.05      # 5% Max Margin Load
-TIMEFRAME = mt5.TIMEFRAME_M15
-SYMBOL_LIST = ["EURUSD", "GBPUSD", "USDJPY"] # Add your specific symbols here
+warnings.simplefilter("ignore")
 
-# --- WEBHOOK CONFIG (Placeholder for your 3 hooks) ---
-WEBHOOK_URLS = [
-    "YOUR_DISCORD_WEBHOOK_1",
-    "YOUR_DISCORD_WEBHOOK_2",
-    "YOUR_DISCORD_WEBHOOK_3"
-]
+# ==============================================================================
+#  LUMA SINGULARITY [V2.3: STRICT SIZING + STRICT EXITS]
+# ==============================================================================
 
-# --- UI & LOGGING SYSTEM ---
-def print_dashboard(status, details, active_trades=0):
-    """
-    Renders the Server Command Dashboard v2.3 directly to console.
-    Fixes the 'Restoring Visuals' freeze by flushing output immediately.
-    """
-    now = datetime.now().strftime("%H:%M:%S")
-    
-    # Clear screen (optional, creates flickering but keeps dashboard static)
-    # print("\033[H\033[J", end="") 
-    
-    print(f"\n--- SERVER COMMAND DASHBOARD v2.3 [{now}] ---")
-    print(f"Status:   🟢 ONLINE | Mode: TIER 1 (STRICT)")
-    print(f"Activity: {status}")
-    print(f"Details:  {details}")
-    print(f"Trades:   {active_trades} Active")
-    print("-" * 50)
-    sys.stdout.flush()
+# --- PATH CONFIGURATION ---
+DATA_DIR = "/app/data"
+if not os.path.exists(DATA_DIR):
+    try:
+        os.makedirs(DATA_DIR)
+        print(f">> Created persistent directory: {DATA_DIR}")
+    except Exception as e:
+        print(f"xx FAILED TO CREATE DATA DIR: {e}")
 
-def log_event(level, message):
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] {level} : {message}")
+CONFIG_FILE = "server_config.json"
+ANCHOR_FILE = os.path.join(DATA_DIR, "equity_anchor.json")
+VOLUME_FILE = os.path.join(DATA_DIR, "daily_volume.json")
+HISTORY_FILE = os.path.join(DATA_DIR, "trade_logs.json")
+SCORES_FILE = os.path.join(DATA_DIR, "active_scores.json") 
+BTC_TICKER = "BTC"
 
-# --- RISK MANAGEMENT (CRITICAL FIX) ---
-def calculate_safe_lot_size(symbol, sl_pips, account_equity):
-    """
-    Strict Tier 1 Sizing. 
-    Prevents the 'All Acc Balance' threat by capping margin at 5%.
-    """
-    symbol_info = mt5.symbol_info(symbol)
-    if not symbol_info:
-        return 0.0
+FLEET_CONFIG = {
+    "WIF":    {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
+    "DOGE":   {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
+    "PENGU":  {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
+    "POPCAT": {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
+    "BRETT":  {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
+    "SPX":    {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06}
+}
 
-    # 1. Calculate Risk Value
-    risk_amount = account_equity * MAX_RISK_PER_TRADE
-    tick_value = symbol_info.trade_tick_value
-    if tick_value == 0: return 0.0
-    
-    # 2. Raw Lot Calculation based on SL
-    # Formula: (Risk $ / (SL Pips * Tick Value))
-    lot_step = symbol_info.volume_step
-    raw_lots = risk_amount / (sl_pips * tick_value)
-    
-    # 3. MARGIN SAFETY LOCK (The fix for the balance issue)
-    current_price = symbol_info.ask
-    margin_required = mt5.order_calc_margin(mt5.ORDER_TYPE_BUY, symbol, raw_lots, current_price)
-    
-    if margin_required > (account_equity * MAX_MARGIN_LOAD):
-        reduction_factor = (account_equity * MAX_MARGIN_LOAD) / margin_required
-        safe_lots = raw_lots * reduction_factor
-        log_event("SAFETY", f"Size reduced to {safe_lots:.2f} to respect 5% Margin Cap.")
-        raw_lots = safe_lots
+STARTING_EQUITY = 0.0
 
-    # Round down to nearest step
-    lots = int(raw_lots / lot_step) * lot_step
-    return round(lots, 2)
+# --- PERSISTENT LOGGING SYSTEM ---
+def load_history():
+    try:
+        if os.path.exists(HISTORY_FILE):
+            with open(HISTORY_FILE, 'r') as f:
+                data = json.load(f)
+                return deque(data, maxlen=60)
+        return deque(maxlen=60)
+    except: return deque(maxlen=60)
 
-# --- TRADE EXECUTION & MANAGEMENT ---
-def manage_positions():
-    """
-    Active Management Loop.
-    Fixes 'Not Managing' issue by iterating through positions every cycle.
-    """
-    positions = mt5.positions_get()
-    
-    if positions is None or len(positions) == 0:
-        return 0
+def save_history(history_deque):
+    try:
+        with open(HISTORY_FILE, 'w') as f:
+            json.dump(list(history_deque), f)
+    except: pass
 
-    for pos in positions:
-        symbol = pos.symbol
-        # Simple Trailing Stop Logic (Tier 1)
-        # Move SL to Breakeven if > 20 points profit
-        current_price = mt5.symbol_info_tick(symbol).bid
-        points = mt5.symbol_info(symbol).point
-        
-        profit_points = (current_price - pos.price_open) / points
-        
-        # LOGIC: If profit > 200 points (20 pips) and SL is active
-        if profit_points > 200 and pos.sl < pos.price_open:
-            request = {
-                "action": mt5.TRADE_ACTION_SLTP,
-                "position": pos.ticket,
-                "sl": pos.price_open, # Breakeven
-                "tp": pos.tp
-            }
-            result = mt5.order_send(request)
-            if result.retcode == mt5.TRADE_RETCODE_DONE:
-                log_event("MANAGING", f"Position {pos.ticket} secured at Breakeven.")
-                
-    return len(positions)
+TRADE_HISTORY = load_history()
+LIVE_ACTIVITY = "Waiting for signal..."
 
-def scan_market():
-    """
-    Placeholder for your entry logic.
-    Replace this pass with your specific indicator checks.
-    """
-    # Logic goes here...
+# --- SCORE PERSISTENCE ---
+TRADE_SCORES = {}
+def load_scores():
+    global TRADE_SCORES
+    try:
+        if os.path.exists(SCORES_FILE):
+            with open(SCORES_FILE, 'r') as f:
+                TRADE_SCORES = json.load(f)
+    except: TRADE_SCORES = {}
+
+def save_scores():
+    try:
+        with open(SCORES_FILE, 'w') as f:
+            json.dump(TRADE_SCORES, f)
+    except: pass
+
+load_scores()
+
+# --- PERSISTENT VOLUME MEMORY ---
+def load_volume():
+    default_stats = {"wins": 0, "total": 0, "last_reset_day": datetime.now(timezone.utc).day}
+    try:
+        if os.path.exists(VOLUME_FILE):
+            with open(VOLUME_FILE, 'r') as f:
+                data = json.load(f)
+                if data.get("last_reset_day") != datetime.now(timezone.utc).day:
+                    return default_stats
+                return data
+        return default_stats
+    except: return default_stats
+
+def save_volume():
+    global DAILY_STATS
+    try:
+        with open(VOLUME_FILE, 'w') as f:
+            json.dump(DAILY_STATS, f)
+            f.flush(); os.fsync(f.fileno())
+    except: pass
+
+DAILY_STATS = load_volume()
+
+def load_anchor(current_equity):
+    try:
+        if os.path.exists(ANCHOR_FILE):
+            with open(ANCHOR_FILE, 'r') as f:
+                data = json.load(f)
+                return float(data.get("start_equity", current_equity))
+        else:
+            with open(ANCHOR_FILE, 'w') as f:
+                json.dump({"start_equity": current_equity}, f)
+            return current_equity
+    except: return current_equity
+
+def update_heartbeat(status="ALIVE"):
+    try:
+        temp_file = "heartbeat.tmp"
+        with open(temp_file, "w") as f:
+            json.dump({"last_beat": time.time(), "status": status}, f)
+        os.replace(temp_file, "heartbeat.json")
+    except: pass
+
+def check_daily_reset():
+    global DAILY_STATS
+    current_day = datetime.now(timezone.utc).day
+    if current_day != DAILY_STATS["last_reset_day"]:
+        DAILY_STATS = {"wins": 0, "total": 0, "last_reset_day": current_day}
+        save_volume(); return True
     return False
 
-# --- MAIN SYSTEM LOOP ---
-def main():
-    if not mt5.initialize():
-        log_event("CRITICAL", f"MT5 Init Failed: {mt5.last_error()}")
-        return
+def update_stats(pnl_value):
+    global DAILY_STATS
+    DAILY_STATS["total"] += 1
+    if pnl_value > 0: DAILY_STATS["wins"] += 1
+    save_volume()
 
-    log_event("SYSTEM", "Bot Started. Tier 1 Configuration Loaded.")
-    
+def normalize_positions(raw_positions):
+    clean_pos = []
+    if not raw_positions: return []
+    for item in raw_positions:
+        try:
+            p = item['position'] if 'position' in item else item
+            coin = p.get('coin') or p.get('symbol') or "UNKNOWN"
+            if coin == "UNKNOWN": continue
+            size = float(p.get('szi') or p.get('size') or 0)
+            entry = float(p.get('entryPx') or p.get('entry_price') or 0)
+            pnl = float(p.get('unrealizedPnl') or 0)
+            if size == 0: continue
+            clean_pos.append({"coin": coin, "size": size, "entry": entry, "pnl": pnl})
+        except: continue
+    return clean_pos
+
+def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", secured_list=[], trade_event=None, activity_event=None, session="N/A"):
+    global STARTING_EQUITY, TRADE_HISTORY, LIVE_ACTIVITY, DAILY_STATS
     try:
+        if STARTING_EQUITY == 0.0 and equity > 0: STARTING_EQUITY = load_anchor(equity)
+        pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
+
+        if trade_event:
+            t_str = time.strftime("[%d-%b %H:%M:%S]")
+            final_msg = f"{t_str} {trade_event}" if not trade_event.startswith("[") else trade_event
+            TRADE_HISTORY.append(final_msg)
+            save_history(TRADE_HISTORY)
+
+        if activity_event: LIVE_ACTIVITY = f">> {activity_event}"
+
+        history_str = "||".join(list(TRADE_HISTORY))
+        pos_str = "NO_TRADES"
+        risk_report = []
+
+        win_rate = int((DAILY_STATS["wins"] / DAILY_STATS["total"]) * 100) if DAILY_STATS["total"] > 0 else 0
+        daily_stats_str = f"{DAILY_STATS['wins']}/{DAILY_STATS['total']} ({win_rate}%)"
+
+        if positions:
+            pos_lines = []
+            for p in positions:
+                coin, size, entry, pnl_val = p['coin'], p['size'], p['entry'], p['pnl']
+                side = "LONG" if size > 0 else "SHORT"
+                lev_display = FLEET_CONFIG.get(coin, {}).get('lev', 10)
+                if mode == "GOD_MODE" and FLEET_CONFIG.get(coin, {}).get('type') == "MEME": lev_display = 10
+                
+                margin = (abs(size) * entry) / lev_display
+                roe = (pnl_val / margin) * 100 if margin > 0 else 0.0
+                icon = "🔒" if coin in secured_list else ""
+                target = entry * (1 + (1/lev_display)) if side == "LONG" else entry * (1 - (1/lev_display))
+                t_str_px = f"{target:.6f}" if target < 1.0 else f"{target:.2f}"
+                
+                score_display = f"{int(TRADE_SCORES.get(coin, 50))}%"
+                pos_lines.append(f"{coin}|{side}|{pnl_val:.2f}|{roe:.1f}|{icon}|{t_str_px}|{score_display}")
+                
+                risk_report.append(f"{coin}|{side}|{margin:.2f}|{'SECURED' if coin in secured_list else 'RISK ON'}|{entry if coin in secured_list else 'Stop Loss'}")
+            pos_str = "::".join(pos_lines)
+
+        if not risk_report: risk_report.append("NO_TRADES")
+
+        data = {
+            "equity": f"{equity:.2f}", "cash": f"{cash:.2f}", "pnl": f"{pnl:+.2f}",
+            "status": status_msg, "session": session, "win_rate": daily_stats_str,
+            "trade_history": history_str, "live_activity": LIVE_ACTIVITY,
+            "positions": pos_str, "risk_report": "::".join(risk_report),
+            "mode": mode, "updated": time.time()
+        }
+        temp_dash = "dashboard_state.tmp"
+        with open(temp_dash, "w") as f: json.dump(data, f, ensure_ascii=False)
+        os.replace(temp_dash, "dashboard_state.json")
+    except: pass
+
+# --- LOGIC SCORE ENGINE (Safe Implementation) ---
+def calculate_logic_score(coin, candles, session, regime):
+    """Calculates 0-100 Confidence Score based on Evolution Data Points"""
+    score = 50.0 
+    try:
+        # 1. Trend Angle (Slope of last 4 candles)
+        if len(candles) >= 4:
+            closes = [float(c.get('close') or c.get('c')) for c in candles[-4:]]
+            slope = (closes[-1] - closes[0]) / closes[0]
+            if slope > 0.02: score += 15  # Strong Bull
+            elif slope > 0.005: score += 5 
+            elif slope < -0.01: score -= 15 # Bear Drag
+
+        # 2. Session ID (Liquidity Preference)
+        if "LONDON" in session or "NEW_YORK" in session: score += 10
+        elif "ASIA" in session: score -= 5 
+
+        # 3. Regime State
+        if regime == "BULLISH": score += 15
+        elif regime == "BEARISH": score -= 20 
+
+        # 4. Volatility Expansion (Simple Range Check)
+        if len(candles) >= 2:
+            curr_rng = float(candles[-1]['high']) - float(candles[-1]['low'])
+            prev_rng = float(candles[-2]['high']) - float(candles[-2]['low'])
+            if curr_rng > prev_rng * 1.5: score += 5
+            
+    except: pass
+    return min(max(int(score), 0), 100)
+
+try:
+    print(">> [1/10] Loading Modules...")
+    from vision import Vision
+    from hands import Hands
+    from xenomorph import Xenomorph
+    from smart_money import SmartMoney
+    from deep_sea import DeepSea
+    from messenger import Messenger
+    from chronos import Chronos
+    from historian import Historian
+    from oracle import Oracle
+    from seasonality import Seasonality
+    from predator import Predator
+
+    update_heartbeat("STARTING")
+    print(">> [2/10] Initializing Organs...")
+    vision, hands, xeno, whale, ratchet, msg, chronos, history, oracle, season, predator = Vision(), Hands(), Xenomorph(), SmartMoney(), DeepSea(), Messenger(), Chronos(), Historian(), Oracle(), Seasonality(), Predator()
+    print(">> SYSTEM INTEGRITY: 100%")
+except Exception as e:
+    print(f"xx CRITICAL LOAD ERROR: {e}"); sys.exit()
+
+def main_loop():
+    global STARTING_EQUITY
+    print("🦅 LUMA SINGULARITY (V2.3: STRICT SIZING/EXITS)")
+    try:
+        update_heartbeat("BOOTING")
+        address = os.environ.get("WALLET_ADDRESS")
+        if not address:
+            try:
+                cfg = json.load(open(CONFIG_FILE))
+                address = cfg.get('wallet_address')
+            except: pass
+        if not address: return
+
+        msg.send("info", "🦅 **LUMA ONLINE:** SIZING LOCKED. RATCHET LOCKED.")
+        last_history_check = 0; cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}; leverage_memory = {}
+
         while True:
-            # 1. Connection Check
-            if not mt5.terminal_info().connected:
-                print_dashboard("🔴 OFFLINE", "Connection Lost")
-                time.sleep(5)
-                continue
+            update_heartbeat("ALIVE")
+            session_data = chronos.get_session(); session_name = session_data['name']
+            if check_daily_reset():
+                update_dashboard(0, 0, "DAILY RESET", [], "STANDARD", [], trade_event="--- DAILY STATS RESET ---", session=session_name)
 
-            # 2. Update Account Info
-            account_info = mt5.account_info()
-            if not account_info:
-                print("Failed to get account info")
-                continue
+            if time.time() - last_history_check > 14400:
+                try:
+                    btc_daily = vision.get_candles(BTC_TICKER, "1d")
+                    if btc_daily: cached_history_data = history.check_regime(btc_daily); last_history_check = time.time()
+                except: pass
+            
+            regime = cached_history_data.get('regime', 'NEUTRAL')
 
-            # 3. Manage Existing Trades (Priority)
-            active_count = manage_positions()
+            equity, cash, clean_positions, open_orders = 0.0, 0.0, [], []
+            try:
+                user_state = vision.get_user_state(address)
+                if user_state:
+                    equity = float(user_state.get('marginSummary', {}).get('accountValue', 0))
+                    cash = float(user_state.get('withdrawable', 0))
+                    clean_positions = normalize_positions(user_state.get('assetPositions', []))
+                    open_orders = user_state.get('openOrders', [])
+            except: pass
 
-            # 4. Scan for New Trades
-            # Only scan if we have margin (Logic check)
-            if scan_market():
-                log_event("TRADE", "Signal Detected (Placeholder)")
+            if STARTING_EQUITY == 0.0 and equity > 0: STARTING_EQUITY = load_anchor(equity)
+            current_roe_pct = ((equity - STARTING_EQUITY) / (STARTING_EQUITY if STARTING_EQUITY > 0 else 1.0)) * 100
 
-            # 5. Update UI (Visual Fix)
-            if active_count > 0:
-                print_dashboard("MANAGING", "Optimizing Positions...", active_count)
-            else:
-                print_dashboard("SCANNING", "Market Evaluation in progress...", 0)
+            if 1.0 < equity < 300.0:
+                msg.send("errors", "CRITICAL: EQUITY < $300."); time.sleep(3600); continue
 
-            # 6. Throttle (Prevent CPU overload but fast enough for ticks)
-            time.sleep(1)
+            risk_mode, titan_active, shield_active = "STANDARD", current_roe_pct >= 12.0, current_roe_pct <= -10.0
+            status_msg = f"🛡️ SHIELD ACTIVE | ROE:{current_roe_pct:.2f}%" if shield_active else f"Mode:STANDARD (ROE:{current_roe_pct:.2f}%)"
+            if shield_active: risk_mode = "RECOVERY"
+            elif not shield_active:
+                if equity < 412.0: risk_mode = "RECOVERY"
+                elif current_roe_pct >= 5.0: risk_mode = "GOD_MODE"
 
-    except KeyboardInterrupt:
-        mt5.shutdown()
-        print("\nBot Stopped by User.")
+            update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, session=session_name)
+            print(f">> [{time.strftime('%H:%M:%S')}] {status_msg}", end='\r')
+
+            active_coins = [p['coin'] for p in clean_positions]
+            for coin, rules in FLEET_CONFIG.items():
+                update_heartbeat("SCANNING")
+                target_lev = 10 if risk_mode == "GOD_MODE" and rules['type'] == "MEME" else (5 if risk_mode == "RECOVERY" or shield_active else rules['lev'])
+
+                if coin not in active_coins and leverage_memory.get(coin) != int(target_lev):
+                    try: hands.set_leverage_all([coin], leverage=int(target_lev)); leverage_memory[coin] = int(target_lev)
+                    except: pass
+
+                if ratchet.check_trauma(hands, coin) or next((p for p in clean_positions if p['coin'] == coin), None): continue
+                try: candles = vision.get_candles(coin, "1h")
+                except: candles = []
+                if not candles: continue
+                current_price = float(candles[-1].get('close') or 0)
+                update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, session=session_name, activity_event=f"Scanning {coin}...")
+
+                pending = next((o for o in open_orders if o.get('coin') == coin), None)
+                if pending:
+                    try:
+                        order_price = float(pending.get('limitPx') or 0)
+                        if abs(current_price - order_price) / order_price > 0.005:
+                            hands.cancel_all_orders(coin); continue
+                    except: continue
+
+                proposal, trend = None, predator.analyze_divergence(candles, coin)
+                whale_sig, xeno_sig = whale.hunt_turtle(candles) or whale.hunt_ghosts(candles), xeno.hunt(coin, candles)
+
+                if xeno_sig == "ATTACK" and (not (titan_active or shield_active) or trend == "REAL_PUMP"):
+                    proposal = {"source": "SNIPER", "side": "BUY", "price": current_price * 0.999}
+                if whale_sig and trend != "REAL_PUMP":
+                    proposal = {"source": whale_sig['type'], "side": whale_sig['side'], "price": whale_sig['price']}
+
+                if proposal:
+                    # --- EVOLUTION: CALCULATE LOGIC SCORE ---
+                    logic_score = calculate_logic_score(coin, candles, session_name, regime)
+                    
+                    # Base Calculation (Standard Tier 1 Logic)
+                    base_sz = min(equity * 0.11 * season.get_multiplier(rules['type']).get('mult', 1.0), equity * 0.165)
+                    final_sz_usd = base_sz
+
+                    # Feature: RISK SHIELD ONLY
+                    # We REMOVED the 1.5x boost. We ONLY keep the 0.5x cut for safety.
+                    if logic_score < 30: final_sz_usd = final_sz_usd * 0.5
+                    
+                    final_sz = max(round(final_sz_usd * target_lev, 2), 40)
+
+                    if oracle.consult(coin, proposal['source'], proposal['price'], f"Session: {session_name}"):
+                        msg_txt = f"OPEN {coin} ({proposal['source']}) ${final_sz_usd:.0f} [Score:{logic_score}]"
+                        hands.place_trap(coin, proposal['side'], proposal['price'], final_sz)
+                        msg.notify_trade(coin, proposal['source'], proposal['price'], final_sz)
+                        
+                        # Save Score for display only
+                        TRADE_SCORES[coin] = logic_score
+                        save_scores()
+                        
+                        update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, trade_event=msg_txt, session=session_name)
+
+            # --- RATCHET MANAGEMENT (STRICT) ---
+            # Using the standard FLEET_CONFIG ensures the DeepSea Surgical Scalper (1% Lock) is respected.
+            ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
+            
+            if ratchet_events:
+                for event in ratchet_events:
+                    if any(x in event for x in ["PROFIT", "+", "WIN", "GAIN"]): update_stats(1)
+                    elif any(x in event for x in ["LOSS", "-", "LOSE"]): update_stats(-1)
+                    update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, trade_event=event, session=session_name)
+            time.sleep(3)
+
+    except Exception as e: print(f"xx CRITICAL: {e}"); msg.send("errors", f"CRASH: {e}")
 
 if __name__ == "__main__":
-    main()
+    try: main_loop()
+    except: print("\n🦅 LUMA OFFLINE")
