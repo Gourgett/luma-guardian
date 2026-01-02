@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 warnings.simplefilter("ignore")
 
 # ==============================================================================
-#  LUMA SINGULARITY [ORDER RETENTION FIX]
+#  LUMA SINGULARITY [GHOST SILENCER & CONFIDENCE FIX]
 # ==============================================================================
 
 # --- PATH CONFIGURATION ---
@@ -176,11 +176,11 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
         pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
 
         if trade_event:
+            # Added Date to Timestamp for clarity
             t_str = time.strftime("[%d-%b %H:%M:%S]")
             final_msg = f"{t_str} {trade_event}" if not trade_event.startswith("[") else trade_event
             save_history(final_msg)
         
-        # DASHBOARD FIX: Read from Disk to prevent vanishing logs
         DISPLAY_HISTORY = load_history()
 
         if activity_event: LIVE_ACTIVITY = f">> {activity_event}"
@@ -206,7 +206,9 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
                 target = entry * (1 + (1/lev_display)) if side == "LONG" else entry * (1 - (1/lev_display))
                 t_str_px = f"{target:.6f}" if target < 1.0 else f"{target:.2f}"
                 
+                # --- FIX: ADD SCORE TO DASHBOARD ---
                 score_display = f"{int(TRADE_SCORES.get(coin, 50))}%"
+                # Added score_display as the 7th item
                 pos_lines.append(f"{coin}|{side}|{pnl_val:.2f}|{roe:.1f}|{icon}|{t_str_px}|{score_display}")
                 
                 risk_report.append(f"{coin}|{side}|{margin:.2f}|{'SECURED' if coin in secured_list else 'RISK ON'}|{entry if coin in secured_list else 'Stop Loss'}")
@@ -275,7 +277,7 @@ except Exception as e:
 
 def main_loop():
     global STARTING_EQUITY
-    print("🦅 LUMA SINGULARITY [RESTORED]")
+    print("🦅 LUMA SINGULARITY [GHOST SILENCER]")
     try:
         update_heartbeat("BOOTING")
         update_dashboard(0, 0, "SYSTEM BOOTING...", [], "STANDARD", [], activity_event="Connecting...")
@@ -289,12 +291,14 @@ def main_loop():
         
         if not address: return
 
-        msg.send("info", "🦅 **LUMA ONLINE:** SYSTEM RESTORED.")
+        msg.send("info", "🦅 **LUMA ONLINE:** SILENCER ACTIVE.")
         last_history_check = 0; cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}; leverage_memory = {}
         
         known_positions = {}
-        # Simple throttle memory to prevent machine-gunning
         last_action_time = {}
+        
+        # --- NEW: MEMORY FOR SELF-KILLS ---
+        recently_closed = {}
 
         while True:
             update_heartbeat("ALIVE")
@@ -322,7 +326,6 @@ def main_loop():
                     api_success = True
             except: pass
             
-            # --- DASHBOARD FIX: No API = No Update (Prevents vanishing) ---
             if not api_success:
                  time.sleep(1); continue
 
@@ -341,11 +344,17 @@ def main_loop():
 
             current_coins = [p['coin'] for p in clean_positions]
             
-            # --- MANUAL CLOSE DETECTION FIX ---
             manual_close_event = None
             for k_coin in list(known_positions.keys()):
                 if k_coin not in current_coins:
-                    manual_close_event = f"🕵️ DETECTED CLOSE: {k_coin}"
+                    # --- FIX: GHOST SILENCER LOGIC ---
+                    # Only report "Detected Close" if WE didn't just close it ourselves (in the last 10s)
+                    if time.time() - recently_closed.get(k_coin, 0) > 10:
+                        manual_close_event = f"🕵️ DETECTED CLOSE: {k_coin}"
+                    else:
+                        # Silence: We know we closed it.
+                        pass
+            
             known_positions = {p['coin']: p for p in clean_positions}
 
             update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, trade_event=manual_close_event, session=session_name)
@@ -353,8 +362,6 @@ def main_loop():
             print(f">> [{time.strftime('%H:%M:%S')}] {status_msg}", end='\r')
 
             active_coins = [p['coin'] for p in clean_positions]
-            
-            # --- WALLET EDGING CAP (70% / 6) ---
             wallet_edging_cap = (equity * 0.70) / 6
 
             for coin, rules in FLEET_CONFIG.items():
@@ -367,7 +374,7 @@ def main_loop():
 
                 if ratchet.check_trauma(hands, coin) or next((p for p in clean_positions if p['coin'] == coin), None): continue
                 
-                # --- ANTI-STACKING (SIMPLE THROTTLE) ---
+                # --- ANTI-STACKING ---
                 if time.time() - last_action_time.get(coin, 0) < 30:
                     continue
 
@@ -377,18 +384,14 @@ def main_loop():
                 current_price = float(candles[-1].get('close') or 0)
                 update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, session=session_name, activity_event=f"Scanning {coin}...")
 
-                # --- 🛑 THE FIX: ORDER RETENTION CHECK 🛑 ---
+                # --- ORDER RETENTION (GOOD) ---
                 pending = next((o for o in open_orders if o.get('coin') == coin), None)
                 if pending:
                     try:
                         order_price = float(pending.get('limitPx') or 0)
-                        # IF ORDER IS BAD (MOVED): Cancel & Continue loop (to replace)
                         if abs(current_price - order_price) / order_price > 0.005:
                             hands.cancel_all_orders(coin)
-                            # Let it fall through to place new order
                         else:
-                            # IF ORDER IS GOOD: STOP HERE! DO NOT PLACE A NEW ONE.
-                            # This 'continue' was missing, causing the bot to delete good orders.
                             update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, session=session_name, activity_event=f"Holding Trap {coin}...")
                             continue 
                     except: continue
@@ -403,8 +406,6 @@ def main_loop():
 
                 if proposal:
                     logic_score = calculate_logic_score(coin, candles, session_name, regime)
-                    
-                    # --- EXECUTION LOGIC (SIMPLE) ---
                     base_size = equity * 0.11 * season.get_multiplier(rules['type']).get('mult', 1.0)
                     final_margin_usd = min(base_size, wallet_edging_cap)
                     final_margin_usd = max(final_margin_usd, 10.0)
@@ -415,19 +416,25 @@ def main_loop():
                     if oracle.consult(coin, proposal['source'], proposal['price'], f"Session: {session_name}"):
                         msg_txt = f"OPEN {coin} ({proposal['source']}) Margin:${final_margin_usd:.0f} [Score:{logic_score}]"
                         
-                        hands.place_trap(coin, proposal['side'], proposal['price'], final_sz)
-                        
-                        last_action_time[coin] = time.time()
-                        
-                        msg.notify_trade(coin, proposal['source'], proposal['price'], final_sz)
-                        TRADE_SCORES[coin] = logic_score
-                        save_scores()
-                        update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, trade_event=msg_txt, session=session_name)
+                        if hands.place_trap(coin, proposal['side'], proposal['price'], final_sz):
+                            msg.notify_trade(coin, proposal['source'], proposal['price'], final_sz)
+                            TRADE_SCORES[coin] = logic_score
+                            save_scores()
+                            update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, trade_event=msg_txt, session=session_name)
+                        else:
+                            print(f"xx LOG ABORTED: Order failed for {coin}")
             
             ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
             
             if ratchet_events:
                 for event in ratchet_events:
+                    # --- RECORD SELF-KILL ---
+                    # If we just closed a trade, mark the timestamp so we don't 'Detect Close' it later.
+                    try:
+                        coin_name = event.split(":")[1].split("(")[0].strip() if ":" in event else ""
+                        if coin_name: recently_closed[coin_name] = time.time()
+                    except: pass
+
                     if any(x in event for x in ["PROFIT", "+", "WIN", "GAIN"]): update_stats(1)
                     elif any(x in event for x in ["LOSS", "-", "LOSE"]): update_stats(-1)
                     update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, trade_event=event, session=session_name)
