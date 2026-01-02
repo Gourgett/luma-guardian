@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 warnings.simplefilter("ignore")
 
 # ==============================================================================
-#  LUMA SINGULARITY [V3.7: VAULT ARCHITECTURE]
+#  LUMA SINGULARITY [V3.9: LOGIC RESTORED & LEV FIX]
 # ==============================================================================
 
 # --- PATH CONFIGURATION ---
@@ -21,7 +21,8 @@ CONFIG_FILE = "server_config.json"
 ANCHOR_FILE = os.path.join(DATA_DIR, "equity_anchor.json")
 VOLUME_FILE = os.path.join(DATA_DIR, "daily_volume.json")
 HISTORY_FILE = os.path.join(DATA_DIR, "trade_logs.json")
-ARCHIVE_FILE = os.path.join(DATA_DIR, "luma_archive.txt") # <--- NEW VAULT FILE
+# Restore Archive Path so Page 2 works
+ARCHIVE_FILE = os.path.join(DATA_DIR, "luma_archive.txt")
 SCORES_FILE = os.path.join(DATA_DIR, "active_scores.json")
 BTC_TICKER = "BTC"
 
@@ -37,9 +38,8 @@ FLEET_CONFIG = {
 
 STARTING_EQUITY = 0.0
 
-# --- HISTORY FIX (Dual Storage) ---
+# --- HISTORY FIX (Prevents Data Deletion) ---
 def load_history():
-    # Only loads the short list for the dashboard
     try:
         if os.path.exists(HISTORY_FILE):
             with open(HISTORY_FILE, 'r') as f:
@@ -51,17 +51,16 @@ def load_history():
 
 def save_history(new_event=None):
     try:
-        # 1. PERMANENT VAULT (Append to text file)
+        # 1. PERMANENT VAULT (Restored)
         if new_event:
             try:
                 with open(ARCHIVE_FILE, "a", encoding="utf-8") as f:
-                    # Clean newlines to keep it 1 line per event
                     clean_msg = str(new_event).replace("\n", " ")
                     f.write(f"{clean_msg}\n")
             except Exception as e:
                 print(f"xx ARCHIVE FAILED: {e}")
 
-        # 2. LIVE DASHBOARD (Keep last 60 for RAM)
+        # 2. DASHBOARD RAM
         current_data = []
         if os.path.exists(HISTORY_FILE):
             with open(HISTORY_FILE, 'r') as f:
@@ -189,7 +188,6 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
         pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
 
         if trade_event:
-            # Added Date to Timestamp
             t_str = time.strftime("[%d-%b %H:%M:%S]")
             final_msg = f"{t_str} {trade_event}" if not trade_event.startswith("[") else trade_event
             save_history(final_msg)
@@ -220,7 +218,10 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
                 t_str_px = f"{target:.6f}" if target < 1.0 else f"{target:.2f}"
                 
                 score_display = f"{int(TRADE_SCORES.get(coin, 50))}%"
-                pos_lines.append(f"{coin}|{side}|{pnl_val:.2f}|{roe:.1f}|{icon}|{t_str_px}|{score_display}")
+                
+                # --- PREPARING FOR DASHBOARD V3.3 ---
+                # Added 'lev_display' to the data stream so we can see it on the dashboard later
+                pos_lines.append(f"{coin}|{side}|{pnl_val:.2f}|{roe:.1f}|{icon}|{t_str_px}|{score_display}|{lev_display}x")
                 
                 risk_report.append(f"{coin}|{side}|{margin:.2f}|{'SECURED' if coin in secured_list else 'RISK ON'}|{entry if coin in secured_list else 'Stop Loss'}")
             pos_str = "::".join(pos_lines)
@@ -288,7 +289,7 @@ except Exception as e:
 
 def main_loop():
     global STARTING_EQUITY
-    print("🦅 LUMA SINGULARITY [V3.7 VAULT ACTIVE]")
+    print("🦅 LUMA SINGULARITY [V3.9 SYSTEM LIVE]")
     try:
         update_heartbeat("BOOTING")
         update_dashboard(0, 0, "SYSTEM BOOTING...", [], "STANDARD", [], activity_event="Connecting...")
@@ -302,7 +303,7 @@ def main_loop():
         
         if not address: return
 
-        msg.send("info", "🦅 **LUMA ONLINE:** VAULT ACTIVE.")
+        msg.send("info", "🦅 **LUMA ONLINE:** SYSTEM LIVE.")
         last_history_check = 0; cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}; leverage_memory = {}
         
         known_positions = {}
@@ -373,12 +374,20 @@ def main_loop():
                 target_lev = 10 if risk_mode == "GOD_MODE" and rules['type'] == "MEME" else (5 if risk_mode == "RECOVERY" or shield_active else rules['lev'])
 
                 if coin not in active_coins and leverage_memory.get(coin) != int(target_lev):
-                    try: hands.set_leverage_all([coin], leverage=int(target_lev)); leverage_memory[coin] = int(target_lev)
-                    except: pass
+                    # --- V3.9 FIX: DIAGNOSE LEVERAGE FAILURE ---
+                    try: 
+                        hands.set_leverage_all([coin], leverage=int(target_lev))
+                        leverage_memory[coin] = int(target_lev)
+                    except Exception as e:
+                        # Print error to log so we know WHY it stays at 3x
+                        print(f"xx LEV UPDATE FAILED ({coin}): {e}")
+                    # -------------------------------------------
 
                 if ratchet.check_trauma(hands, coin) or next((p for p in clean_positions if p['coin'] == coin), None): continue
                 
-                if time.time() - last_action_time.get(coin, 0) < 30: continue
+                # --- ANTI-STACKING (Original Logic Check) ---
+                if time.time() - last_action_time.get(coin, 0) < 30:
+                    continue
 
                 try: candles = vision.get_candles(coin, "1h")
                 except: candles = []
@@ -410,12 +419,17 @@ def main_loop():
                     base_size = equity * 0.11 * season.get_multiplier(rules['type']).get('mult', 1.0)
                     final_margin_usd = min(base_size, wallet_edging_cap)
                     final_margin_usd = max(final_margin_usd, 10.0)
+                    
                     final_sz_notional = final_margin_usd * target_lev
                     final_sz = round(final_sz_notional, 2)
 
                     if oracle.consult(coin, proposal['source'], proposal['price'], f"Session: {session_name}"):
                         msg_txt = f"OPEN {coin} ({proposal['source']}) Margin:${final_margin_usd:.0f} [Score:{logic_score}]"
                         if hands.place_trap(coin, proposal['side'], proposal['price'], final_sz):
+                            # --- V3.9 CRITICAL FIX: RESET TIMER ---
+                            # This completes the logic from line 389
+                            last_action_time[coin] = time.time()
+                            # --------------------------------------
                             msg.notify_trade(coin, proposal['source'], proposal['price'], final_sz)
                             TRADE_SCORES[coin] = logic_score
                             save_scores()
