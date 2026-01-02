@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 warnings.simplefilter("ignore")
 
 # ==============================================================================
-#  LUMA SINGULARITY [V3.6: GHOST SILENCER, CONFIDENCE FIX & HISTORY SCORE]
+#  LUMA SINGULARITY [V3.7: VAULT ARCHITECTURE]
 # ==============================================================================
 
 # --- PATH CONFIGURATION ---
@@ -21,6 +21,7 @@ CONFIG_FILE = "server_config.json"
 ANCHOR_FILE = os.path.join(DATA_DIR, "equity_anchor.json")
 VOLUME_FILE = os.path.join(DATA_DIR, "daily_volume.json")
 HISTORY_FILE = os.path.join(DATA_DIR, "trade_logs.json")
+ARCHIVE_FILE = os.path.join(DATA_DIR, "luma_archive.txt") # <--- NEW VAULT FILE
 SCORES_FILE = os.path.join(DATA_DIR, "active_scores.json")
 BTC_TICKER = "BTC"
 
@@ -36,8 +37,9 @@ FLEET_CONFIG = {
 
 STARTING_EQUITY = 0.0
 
-# --- HISTORY FIX (Prevents Data Deletion) ---
+# --- HISTORY FIX (Dual Storage) ---
 def load_history():
+    # Only loads the short list for the dashboard
     try:
         if os.path.exists(HISTORY_FILE):
             with open(HISTORY_FILE, 'r') as f:
@@ -49,6 +51,17 @@ def load_history():
 
 def save_history(new_event=None):
     try:
+        # 1. PERMANENT VAULT (Append to text file)
+        if new_event:
+            try:
+                with open(ARCHIVE_FILE, "a", encoding="utf-8") as f:
+                    # Clean newlines to keep it 1 line per event
+                    clean_msg = str(new_event).replace("\n", " ")
+                    f.write(f"{clean_msg}\n")
+            except Exception as e:
+                print(f"xx ARCHIVE FAILED: {e}")
+
+        # 2. LIVE DASHBOARD (Keep last 60 for RAM)
         current_data = []
         if os.path.exists(HISTORY_FILE):
             with open(HISTORY_FILE, 'r') as f:
@@ -176,7 +189,7 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
         pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
 
         if trade_event:
-            # Added Date to Timestamp for clarity
+            # Added Date to Timestamp
             t_str = time.strftime("[%d-%b %H:%M:%S]")
             final_msg = f"{t_str} {trade_event}" if not trade_event.startswith("[") else trade_event
             save_history(final_msg)
@@ -206,9 +219,7 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
                 target = entry * (1 + (1/lev_display)) if side == "LONG" else entry * (1 - (1/lev_display))
                 t_str_px = f"{target:.6f}" if target < 1.0 else f"{target:.2f}"
                 
-                # --- FIX: ADD SCORE TO DASHBOARD ---
                 score_display = f"{int(TRADE_SCORES.get(coin, 50))}%"
-                # Added score_display as the 7th item
                 pos_lines.append(f"{coin}|{side}|{pnl_val:.2f}|{roe:.1f}|{icon}|{t_str_px}|{score_display}")
                 
                 risk_report.append(f"{coin}|{side}|{margin:.2f}|{'SECURED' if coin in secured_list else 'RISK ON'}|{entry if coin in secured_list else 'Stop Loss'}")
@@ -277,7 +288,7 @@ except Exception as e:
 
 def main_loop():
     global STARTING_EQUITY
-    print("🦅 LUMA SINGULARITY [GHOST SILENCER]")
+    print("🦅 LUMA SINGULARITY [V3.7 VAULT ACTIVE]")
     try:
         update_heartbeat("BOOTING")
         update_dashboard(0, 0, "SYSTEM BOOTING...", [], "STANDARD", [], activity_event="Connecting...")
@@ -291,13 +302,11 @@ def main_loop():
         
         if not address: return
 
-        msg.send("info", "🦅 **LUMA ONLINE:** SILENCER ACTIVE.")
+        msg.send("info", "🦅 **LUMA ONLINE:** VAULT ACTIVE.")
         last_history_check = 0; cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}; leverage_memory = {}
         
         known_positions = {}
         last_action_time = {}
-        
-        # --- NEW: MEMORY FOR SELF-KILLS ---
         recently_closed = {}
 
         while True:
@@ -347,13 +356,8 @@ def main_loop():
             manual_close_event = None
             for k_coin in list(known_positions.keys()):
                 if k_coin not in current_coins:
-                    # --- FIX: GHOST SILENCER LOGIC ---
-                    # Only report "Detected Close" if WE didn't just close it ourselves (in the last 10s)
                     if time.time() - recently_closed.get(k_coin, 0) > 10:
                         manual_close_event = f"🕵️ DETECTED CLOSE: {k_coin}"
-                    else:
-                        # Silence: We know we closed it.
-                        pass
             
             known_positions = {p['coin']: p for p in clean_positions}
 
@@ -374,9 +378,7 @@ def main_loop():
 
                 if ratchet.check_trauma(hands, coin) or next((p for p in clean_positions if p['coin'] == coin), None): continue
                 
-                # --- ANTI-STACKING ---
-                if time.time() - last_action_time.get(coin, 0) < 30:
-                    continue
+                if time.time() - last_action_time.get(coin, 0) < 30: continue
 
                 try: candles = vision.get_candles(coin, "1h")
                 except: candles = []
@@ -384,7 +386,6 @@ def main_loop():
                 current_price = float(candles[-1].get('close') or 0)
                 update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, session=session_name, activity_event=f"Scanning {coin}...")
 
-                # --- ORDER RETENTION (GOOD) ---
                 pending = next((o for o in open_orders if o.get('coin') == coin), None)
                 if pending:
                     try:
@@ -409,13 +410,11 @@ def main_loop():
                     base_size = equity * 0.11 * season.get_multiplier(rules['type']).get('mult', 1.0)
                     final_margin_usd = min(base_size, wallet_edging_cap)
                     final_margin_usd = max(final_margin_usd, 10.0)
-                    
                     final_sz_notional = final_margin_usd * target_lev
                     final_sz = round(final_sz_notional, 2)
 
                     if oracle.consult(coin, proposal['source'], proposal['price'], f"Session: {session_name}"):
                         msg_txt = f"OPEN {coin} ({proposal['source']}) Margin:${final_margin_usd:.0f} [Score:{logic_score}]"
-                        
                         if hands.place_trap(coin, proposal['side'], proposal['price'], final_sz):
                             msg.notify_trade(coin, proposal['source'], proposal['price'], final_sz)
                             TRADE_SCORES[coin] = logic_score
@@ -428,23 +427,14 @@ def main_loop():
             
             if ratchet_events:
                 for event in ratchet_events:
-                    # --- NEW: INJECT SCORE INTO CLOSE LOG ---
-                    # Logic: We parse the coin name from the event string, look up its original score,
-                    # and append it to the log message so it shows in history.
                     try:
-                        # Event format is usually "💰 TAG: COIN (PNL...)"
                         if ":" in event:
-                            # Extract "WIF" from " WIF (+12.00...)"
                             coin_name = event.split(":")[1].strip().split(" ")[0]
-                            
-                            # Fetch the score from memory
                             if coin_name in TRADE_SCORES:
                                 end_score = int(TRADE_SCORES[coin_name])
                                 event = f"{event} [Score:{end_score}]"
                     except: pass
-                    # ----------------------------------------
 
-                    # --- RECORD SELF-KILL ---
                     try:
                         coin_name = event.split(":")[1].split("(")[0].strip() if ":" in event else ""
                         if coin_name: recently_closed[coin_name] = time.time()
