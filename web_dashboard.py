@@ -1,11 +1,11 @@
 from flask import Flask, render_template_string, jsonify
 import json
 import os
-import re  # <--- NEW: Imported for smarter text pattern matching
+import re
 
 app = Flask(__name__)
 
-# --- PAGE 1: COMMAND CENTER (Streamlined) ---
+# --- PAGE 1: COMMAND CENTER (With Leverage Column) ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -30,7 +30,7 @@ HTML_TEMPLATE = """
 <body>
     <div class="card">
         <div class="header" style="display:flex; justify-content:space-between;">
-            <span>🦅 LUMA GUARDIAN [V3.2 SMART PNL]</span>
+            <span>🦅 LUMA GUARDIAN [V3.3 LIVE]</span>
             <a href="/history" target="_blank" class="btn">📜 PERFORMANCE VAULT</a>
         </div>
         <div id="status" style="font-size: 0.9em; margin-bottom: 10px;">CONNECTING...</div>
@@ -54,7 +54,7 @@ HTML_TEMPLATE = """
         <div class="header">⚡ ACTIVE POSITIONS</div>
         <table id="pos-table">
             <thead>
-                <tr> <th>COIN</th> <th>SIDE</th> <th>PNL</th> <th>ROE</th> <th>CONF%</th> </tr>
+                <tr> <th>COIN</th> <th>SIDE</th> <th>LEV</th> <th>PNL</th> <th>ROE</th> <th>CONF%</th> </tr>
             </thead>
             <tbody></tbody>
         </table>
@@ -97,11 +97,13 @@ HTML_TEMPLATE = """
                             let icon = parts[4] || ""; 
                             let link = `<a href="https://app.hyperliquid.xyz/trade/${parts[0]}" target="_blank">${icon} ${parts[0]}</a>`;
                             let score = parts[6] || "---"; 
-                            tr.innerHTML = `<td>${link}</td><td>${parts[1]}</td><td class="${color}">$${parts[2]}</td><td class="${color}">${parts[3]}%</td><td class="gold">${score}</td>`;
+                            let lev = parts[7] || "---"; // Catch the new Leverage item
+                            
+                            tr.innerHTML = `<td>${link}</td><td>${parts[1]}</td><td style='color:#8b949e'>${lev}</td><td class="${color}">$${parts[2]}</td><td class="${color}">${parts[3]}%</td><td class="gold">${score}</td>`;
                             tbody.appendChild(tr);
                         }
                     });
-                } else { tbody.innerHTML = "<tr><td colspan='5' style='text-align:center; color:#555;'>NO ACTIVE TRADES</td></tr>"; }
+                } else { tbody.innerHTML = "<tr><td colspan='6' style='text-align:center; color:#555;'>NO ACTIVE TRADES</td></tr>"; }
 
                 if (data.risk_report) document.getElementById('risk-report').innerText = data.risk_report.replace(/::/g, " | ");
 
@@ -119,7 +121,7 @@ HTML_TEMPLATE = """
 </html>
 """
 
-# --- PAGE 2: THE VAULT (Filtered & Correctly Colored) ---
+# --- PAGE 2: THE VAULT (Smart PnL Coloring) ---
 HISTORY_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -168,35 +170,21 @@ def history():
                 u = line.upper()
                 
                 # --- STRICT FILTER ---
-                # Only allow lines that are definitely about CLOSING a trade.
                 if any(x in u for x in ["PROFIT", "LOSS", "SECURED", "WIN", "LOSE", "STOP", "CUT"]):
                     
-                    # --- NEW: SMART COLOR LOGIC (PNL SIGN DETECTION) ---
-                    color = "green" # Default to green
-                    
-                    # 1. Try to detect negative PnL from the "(+X.XX | X.X%)" part
+                    # --- SMART COLOR LOGIC ---
+                    color = "green" 
                     try:
-                        # Regex to find the PnL value just after the opening parenthesis
-                        # Looks for: ( followed by optional + or -, then digits/dots, then |
                         match = re.search(r'\(([+-]?\d*\.?\d+)\s*\|', line)
                         if match:
                             pnl_str = match.group(1)
-                            # If the number starts with '-', it's a loss -> RED
-                            if pnl_str.startswith('-'):
-                                color = "red"
+                            if pnl_str.startswith('-'): color = "red"
                         else:
-                            # 2. Fallback: If no standard PnL format is found, check for negative keywords
-                            if any(x in u for x in ["LOSS", "LOSE", "CUT", "STOP"]):
-                                color = "red"
+                            if any(x in u for x in ["LOSS", "LOSE", "CUT", "STOP"]): color = "red"
                     except:
-                         # Safety fallback in case regex crashes
-                         if any(x in u for x in ["LOSS", "LOSE", "CUT", "STOP"]):
-                            color = "red"
+                         if any(x in u for x in ["LOSS", "LOSE", "CUT", "STOP"]): color = "red"
                     
-                    # Clean up the line for display
-                    clean_line = line.strip()
-                    
-                    formatted.append(f"<div class='log-entry {color}'>{clean_line}</div>")
+                    formatted.append(f"<div class='log-entry {color}'>{line.strip()}</div>")
             
             if not formatted:
                 return render_template_string(HISTORY_TEMPLATE, content="<div style='padding:20px; color:#8b949e;'>NO CLOSED TRADES FOUND YET.</div>")
