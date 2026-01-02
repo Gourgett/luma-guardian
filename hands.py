@@ -23,6 +23,18 @@ class Hands:
         
         self.info = Info(constants.MAINNET_API_URL, skip_ws=True)
         self.exchange = Exchange(self.account, constants.MAINNET_API_URL)
+        
+        # --- UNIVERSAL SIZING FIX ---
+        # Load the "Universe" (Metadata) from Hyperliquid to get exact decimals for EVERY coin.
+        try:
+            print(">> HANDS: Loading Universe Metadata...")
+            self.meta = self.info.meta()
+            # Create a lookup dictionary: {'BTC': {'szDecimals': 3}, ...}
+            self.coin_map = {c['name']: c for c in self.meta['universe']}
+            print(">> HANDS: Universe Loaded (Universal Sizing Active).")
+        except Exception as e:
+            print(f"xx HANDS WARNING: Could not load Universe: {e}")
+            self.coin_map = {}
 
     def _load_config(self):
         try:
@@ -53,36 +65,22 @@ class Hands:
             print(f"xx CLEANUP FAILED: {e}")
 
     def _get_precision(self, coin):
-        # --- PRINCES (Legacy/Safety) ---
-        if coin == "SOL":   return (2, 2)
-        if coin == "SUI":   return (4, 1)
-        if coin == "BTC":   return (1, 3)
-        if coin == "ETH":   return (2, 3)
-
-        # --- MEME FLEET (The 6 Fighters) ---
+        # --- UNIVERSAL LOOKUP ---
+        # Instead of a hardcoded list, we ask the Exchange what the rule is.
+        if coin in self.coin_map:
+            # Get the official size decimals allowed by Hyperliquid
+            sz_dec = self.coin_map[coin]['szDecimals']
+            # Price precision is generally safe at 5 or 6 decimals for calculations
+            return (5, sz_dec)
         
-        # 1. WIF ($3.00 range) -> Standard
-        if coin == "WIF":    return (4, 1)
-        
-        # 2. DOGE ($0.20 range) -> Integer Size usually safer
-        if coin == "DOGE":   return (5, 0)
-        
-        # 3. PENGU ($0.05 range) -> Integer Size
-        if coin == "PENGU":  return (5, 0)
-        
-        # 4. POPCAT ($1.00 range) -> Similar to WIF
-        if coin == "POPCAT": return (4, 1)
-        
-        # 5. BRETT ($0.10 range) -> Similar to DOGE
-        if coin == "BRETT":  return (5, 0)
-        
-        # 6. SPX ($0.50 range) -> Similar to WIF
-        if coin == "SPX":    return (4, 1)
-        
-        # Default Fallback
+        # Fallback for unexpected coins (Safety Net)
         return (4, 1)
 
     def place_trap(self, coin, side, price, size_usd):
+        """
+        Placing a Limit Order. 
+        Returns: TRUE if successful, FALSE if rejected.
+        """
         self.cancel_all_orders(coin)
         px_prec, sz_prec = self._get_precision(coin)
         final_price = round(price, px_prec)
@@ -95,30 +93,53 @@ class Hands:
 
         if final_size == 0:
             print(f"xx SIZE TOO SMALL: {size_usd} -> 0 {coin}")
-            return
+            return False
 
         print(f">> SETTING TRAP: {side} {coin} @ ${final_price} (Size: {final_size})")
 
         try:
             is_buy = True if side == "BUY" else False
+            # We use Gtc (Good Til Canceled) to ensure it hits the book
             result = self.exchange.order(coin, is_buy, final_size, final_price, {"limit": {"tif": "Gtc"}})
-            if result['status'] == 'err':
-                print(f"xx EXCHANGE REJECTED: {result['response']}")
+            
+            # --- CRITICAL FIX: RETURN RECEIPT ---
+            if result['status'] == 'ok':
+                return True
+            elif result['status'] == 'err':
+                print(f"xx EXCHANGE REJECTED {coin}: {result['response']}")
+                return False
+            else:
+                return False
+
         except Exception as e:
             print(f"xx ORDER REJECTED (SDK): {e}")
+            return False
 
     def place_market_order(self, coin, side, size_coins):
+        """
+        Executes Market Order.
+        Returns: TRUE if successful, FALSE if rejected.
+        """
         is_buy = True if side == "BUY" else False
         try:
             _, sz_prec = self._get_precision(coin)
             if sz_prec == 0: sz = int(size_coins)
             else: sz = round(float(size_coins), sz_prec)
             
-            if sz == 0: return
+            if sz == 0: return False
             print(f"⚡ CASTING SPELL: MARKET {side} {sz} {coin}")
-            self.exchange.market_open(coin, is_buy, sz)
+            
+            result = self.exchange.market_open(coin, is_buy, sz)
+            
+            if result['status'] == 'ok':
+                return True
+            else:
+                print(f"xx MARKET FAILED: {result['response']}")
+                return False
+                
         except Exception as e:
             print(f"xx MARKET EXECUTION FAILED: {e}")
+            return False
 
     def place_stop(self, coin, price):
         pass
