@@ -2,7 +2,7 @@ import time
 
 class DeepSea:
     def __init__(self):
-        print(">> DEEP SEA: Ratchet System Loaded (Mode: ULTRA-TIGHT SCALPER)")
+        print(">> DEEP SEA: Ratchet System Loaded (Mode: SLIPPAGE ARMOR)")
         self.secured_coins = []
         self.peak_roe = {}
         self.trauma_record = {}
@@ -42,42 +42,42 @@ class DeepSea:
             if coin not in self.peak_roe: self.peak_roe[coin] = roe
             else:
                 if roe > self.peak_roe[coin]: self.peak_roe[coin] = roe
-            
+
             peak = self.peak_roe[coin]
 
-            # --- ULTRA-TIGHT SCALPER STRATEGY ---
-            
+            # --- SLIPPAGE ARMOR STRATEGY ---
+
             # 1. DIFFERENTIAL HARD STOPS
             if coin_type == "PRINCE":
                 current_floor = -0.04
             else:
                 current_floor = -0.06
 
-            # 2. INSTANT BREAKEVEN (Trigger at 1%)
-            # As soon as we see +1.0%, lock +0.2% to cover fees.
-            if peak >= 0.01:
-                current_floor = 0.002
+            # 2. ARMORED BREAKEVEN (Trigger at 1.5%)
+            # We wait for 1.5% to ensure the move is real.
+            # We lock 0.4% to absorb slippage (0.1% profit + 0.3% buffer).
+            if peak >= 0.015:
+                current_floor = 0.004 
 
-            # 3. AGGRESSIVE TRAIL (Trigger at 2%)
-            # As soon as we see +2.0%, lock +1.0%.
-            # Then trail upwards with a 1% gap (e.g., at 3.5% peak, stop is 2.5%).
+            # 3. AGGRESSIVE TRAIL (Trigger at 2.0%)
+            # As requested: "Trail at 1% directly from 2% up"
             if peak >= 0.02:
                 current_floor = peak - 0.01
 
             # CHECK EXIT
             if roe < current_floor:
                 tag = "STOP LOSS" if current_floor < 0 else "PROFIT SECURED"
-
+                
                 # Only record Trauma if it was a LOSS
                 if current_floor < 0:
                     self.trauma_record[coin] = time.time()
-                
-                hands.place_market_order(coin, "SELL" if size > 0 else "BUY", abs(size))
 
+                hands.place_market_order(coin, "SELL" if size > 0 else "BUY", abs(size))
+                
                 # LOGGING
                 pnl_str = f"{pnl:+.2f}"
                 events.append(f"💰 {tag}: {coin} ({pnl_str} | {roe*100:.1f}%)")
-
+                
                 if coin in self.secured_coins: self.secured_coins.remove(coin)
 
             # VISUAL MARKER
@@ -86,8 +86,8 @@ class DeepSea:
 
             # Emergency Hard Stop
             if roe < -0.40:
-                 hands.place_market_order(coin, "SELL" if size > 0 else "BUY", abs(size))
-                 self.trauma_record[coin] = time.time()
-                 events.append(f"xx EMERGENCY CUT: {coin}")
+                hands.place_market_order(coin, "SELL" if size > 0 else "BUY", abs(size))
+                self.trauma_record[coin] = time.time()
+                events.append(f"xx EMERGENCY CUT: {coin}")
 
         return events
