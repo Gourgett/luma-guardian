@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 warnings.simplefilter("ignore")
 
 # ==============================================================================
-#  LUMA SINGULARITY [V3.3: ORDER RETENTION FIX]
+#  LUMA SINGULARITY [ORDER RETENTION FIX]
 # ==============================================================================
 
 # --- PATH CONFIGURATION ---
@@ -24,19 +24,19 @@ HISTORY_FILE = os.path.join(DATA_DIR, "trade_logs.json")
 SCORES_FILE = os.path.join(DATA_DIR, "active_scores.json")
 BTC_TICKER = "BTC"
 
-# --- CONFIGURATION ---
+# --- CONFIGURATION (Standard) ---
 FLEET_CONFIG = {
-    "WIF":    {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
-    "DOGE":   {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
-    "PENGU":  {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
-    "POPCAT": {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
-    "BRETT":  {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
-    "SPX":    {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06}
+    "WIF":    {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.04},
+    "DOGE":   {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.04},
+    "PENGU":  {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.04},
+    "POPCAT": {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.04},
+    "BRETT":  {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.04},
+    "SPX":    {"type": "MEME", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.04}
 }
 
 STARTING_EQUITY = 0.0
 
-# --- HISTORY SYSTEM ---
+# --- HISTORY FIX (Prevents Data Deletion) ---
 def load_history():
     try:
         if os.path.exists(HISTORY_FILE):
@@ -180,6 +180,7 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
             final_msg = f"{t_str} {trade_event}" if not trade_event.startswith("[") else trade_event
             save_history(final_msg)
         
+        # DASHBOARD FIX: Read from Disk to prevent vanishing logs
         DISPLAY_HISTORY = load_history()
 
         if activity_event: LIVE_ACTIVITY = f">> {activity_event}"
@@ -274,7 +275,7 @@ except Exception as e:
 
 def main_loop():
     global STARTING_EQUITY
-    print("🦅 LUMA SINGULARITY [V3.3: ORDER RETENTION FIX]")
+    print("🦅 LUMA SINGULARITY [RESTORED]")
     try:
         update_heartbeat("BOOTING")
         update_dashboard(0, 0, "SYSTEM BOOTING...", [], "STANDARD", [], activity_event="Connecting...")
@@ -288,10 +289,12 @@ def main_loop():
         
         if not address: return
 
-        msg.send("info", "🦅 **LUMA ONLINE:** ORDER RETENTION ACTIVE.")
+        msg.send("info", "🦅 **LUMA ONLINE:** SYSTEM RESTORED.")
         last_history_check = 0; cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}; leverage_memory = {}
         
         known_positions = {}
+        # Simple throttle memory to prevent machine-gunning
+        last_action_time = {}
 
         while True:
             update_heartbeat("ALIVE")
@@ -319,6 +322,7 @@ def main_loop():
                     api_success = True
             except: pass
             
+            # --- DASHBOARD FIX: No API = No Update (Prevents vanishing) ---
             if not api_success:
                  time.sleep(1); continue
 
@@ -337,6 +341,7 @@ def main_loop():
 
             current_coins = [p['coin'] for p in clean_positions]
             
+            # --- MANUAL CLOSE DETECTION FIX ---
             manual_close_event = None
             for k_coin in list(known_positions.keys()):
                 if k_coin not in current_coins:
@@ -348,6 +353,8 @@ def main_loop():
             print(f">> [{time.strftime('%H:%M:%S')}] {status_msg}", end='\r')
 
             active_coins = [p['coin'] for p in clean_positions]
+            
+            # --- WALLET EDGING CAP (70% / 6) ---
             wallet_edging_cap = (equity * 0.70) / 6
 
             for coin, rules in FLEET_CONFIG.items():
@@ -360,24 +367,29 @@ def main_loop():
 
                 if ratchet.check_trauma(hands, coin) or next((p for p in clean_positions if p['coin'] == coin), None): continue
                 
+                # --- ANTI-STACKING (SIMPLE THROTTLE) ---
+                if time.time() - last_action_time.get(coin, 0) < 30:
+                    continue
+
                 try: candles = vision.get_candles(coin, "1h")
                 except: candles = []
                 if not candles: continue
                 current_price = float(candles[-1].get('close') or 0)
                 update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, session=session_name, activity_event=f"Scanning {coin}...")
 
-                # --- ORDER RETENTION LOGIC (FIXED) ---
+                # --- 🛑 THE FIX: ORDER RETENTION CHECK 🛑 ---
                 pending = next((o for o in open_orders if o.get('coin') == coin), None)
                 if pending:
                     try:
                         order_price = float(pending.get('limitPx') or 0)
-                        # If price moved significantly, cancel to Replace (Chase)
+                        # IF ORDER IS BAD (MOVED): Cancel & Continue loop (to replace)
                         if abs(current_price - order_price) / order_price > 0.005:
                             hands.cancel_all_orders(coin)
-                            # Fall through to place NEW order
+                            # Let it fall through to place new order
                         else:
-                            # Order is GOOD. Skip this coin.
-                            update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, session=session_name, activity_event=f"Pending {coin} (Waiting)...")
+                            # IF ORDER IS GOOD: STOP HERE! DO NOT PLACE A NEW ONE.
+                            # This 'continue' was missing, causing the bot to delete good orders.
+                            update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, session=session_name, activity_event=f"Holding Trap {coin}...")
                             continue 
                     except: continue
 
@@ -392,6 +404,7 @@ def main_loop():
                 if proposal:
                     logic_score = calculate_logic_score(coin, candles, session_name, regime)
                     
+                    # --- EXECUTION LOGIC (SIMPLE) ---
                     base_size = equity * 0.11 * season.get_multiplier(rules['type']).get('mult', 1.0)
                     final_margin_usd = min(base_size, wallet_edging_cap)
                     final_margin_usd = max(final_margin_usd, 10.0)
@@ -402,13 +415,14 @@ def main_loop():
                     if oracle.consult(coin, proposal['source'], proposal['price'], f"Session: {session_name}"):
                         msg_txt = f"OPEN {coin} ({proposal['source']}) Margin:${final_margin_usd:.0f} [Score:{logic_score}]"
                         
-                        if hands.place_trap(coin, proposal['side'], proposal['price'], final_sz):
-                            msg.notify_trade(coin, proposal['source'], proposal['price'], final_sz)
-                            TRADE_SCORES[coin] = logic_score
-                            save_scores()
-                            update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, trade_event=msg_txt, session=session_name)
-                        else:
-                            print(f"xx LOG ABORTED: Order failed for {coin}")
+                        hands.place_trap(coin, proposal['side'], proposal['price'], final_sz)
+                        
+                        last_action_time[coin] = time.time()
+                        
+                        msg.notify_trade(coin, proposal['source'], proposal['price'], final_sz)
+                        TRADE_SCORES[coin] = logic_score
+                        save_scores()
+                        update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, trade_event=msg_txt, session=session_name)
             
             ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
             
