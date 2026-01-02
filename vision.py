@@ -4,7 +4,7 @@ import requests
 
 class Vision:
     def __init__(self):
-        print(">> Vision Module (v3.1) Loaded")
+        print(">> Vision Module (v3.2: DEEP BUFFER) Loaded")
         self.base_url = "https://api.hyperliquid.xyz/info"
         self.cache = {}
 
@@ -40,9 +40,13 @@ class Vision:
         try:
             # Hyperliquid uses millisecond timestamps
             end_time = int(time.time() * 1000)
-            # Fetch last 50 candles approx (enough for Xenomorph 20 + buffer)
-            # 1h = 3600000 ms. 50 * 3.6m = 180,000,000 ms roughly
-            start_time = end_time - (50 * 3600 * 1000)
+            
+            # --- FIX: DATA STARVATION ---
+            # Strategies (SmartMoney) require >55 candles for EMA 50.
+            # Previously fetched 50, causing strategies to abort.
+            # Now fetching 100 candles to provide ample buffer.
+            # 1h = 3600000 ms. 100 * 3.6m = 360,000,000 ms
+            start_time = end_time - (100 * 3600 * 1000)
 
             if interval == "1d":
                 start_time = end_time - (250 * 24 * 3600 * 1000) # 250 days for Historian
