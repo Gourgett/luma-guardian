@@ -4,17 +4,14 @@ import os
 
 app = Flask(__name__)
 
-# --- PATH CONFIGURATION ---
-DATA_DIR = "/app/data"
-STATE_FILE = os.path.join(DATA_DIR, "dashboard_state.json")
-
+# HTML TEMPLATE (V2.3: EVOLUTION COMPATIBLE)
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
     <title>LUMA COMMAND</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta http-equiv="refresh" content="3">
+    <meta http-equiv="refresh" content="2"> 
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: monospace; padding: 20px; }
         .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 15px; margin-bottom: 20px; }
@@ -22,25 +19,51 @@ HTML_TEMPLATE = """
         .red { color: #da3633; }
         .gold { color: #d29922; }
         .cyan { color: #58a6ff; }
-        .gray { color: #8b949e; }
         .header { font-size: 1.2em; font-weight: bold; border-bottom: 1px solid #30363d; padding-bottom: 10px; margin-bottom: 10px; }
+        
         table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
         th, td { text-align: left; padding: 8px; border-bottom: 1px solid #21262d; font-size: 0.9em; }
-        .ticker { font-size: 0.85em; color: #8b949e; border: 1px dashed #30363d; padding: 8px; margin-bottom: 20px; background-color: #0d1117; }
-        .log { font-size: 0.8em; opacity: 0.9; height: 300px; overflow-y: scroll; border: 1px solid #21262d; padding: 5px; }
+        
+        /* LOG WINDOWS */
+        .ticker { 
+            font-size: 0.9em; 
+            color: #8b949e; 
+            border: 1px dashed #30363d; 
+            padding: 8px; 
+            margin-bottom: 20px;
+            background-color: #0d1117;
+        }
+        
+        .log { 
+            font-size: 0.8em; 
+            opacity: 0.9; 
+            height: 350px; 
+            overflow-y: scroll; 
+            border: 1px solid #21262d; 
+            padding: 5px; 
+        }
+
         a { color: inherit; text-decoration: none; border-bottom: 1px dotted #8b949e; }
+        a:hover { color: #58a6ff; border-bottom: 1px solid #58a6ff; }
     </style>
 </head>
 <body>
     <div class="card">
-        <div class="header">🦅 LUMA GUARDIAN [MEME FLEET]</div>
+        <div class="header">🦅 LUMA GUARDIAN [V2.3 LIVE]</div>
         <div id="status" style="font-size: 0.9em; margin-bottom: 10px;">CONNECTING...</div>
-        <div style="display: flex; justify-content: space-between;">
+        
+        <div style="margin-top: 10px; display: flex; justify-content: space-between;">
             <div>EQUITY: <span id="equity" class="green">---</span></div>
-            <div>PNL: <span id="pnl">---</span></div>
+            <div>CASH: <span id="cash">---</span></div>
         </div>
-        <div style="margin-top: 5px; text-align: right; color: #8b949e; font-size: 0.8em;">
-            MODE: <span id="mode">---</span> | WIN RATE: <span id="winrate">---</span>
+        
+        <div style="margin-top: 5px; display: flex; justify-content: space-between;">
+            <div>PNL: <span id="pnl">---</span></div>
+            <div>WIN RATE: <span id="winrate" class="gold">---</span></div>
+        </div>
+
+        <div style="margin-top: 5px; text-align: right; color: #8b949e; font-size: 0.9em;">
+            MODE: <span id="mode" style="color:#c9d1d9;">---</span> | SESSION: <span id="session">---</span>
         </div>
     </div>
 
@@ -48,82 +71,135 @@ HTML_TEMPLATE = """
         <div class="header">⚡ ACTIVE POSITIONS</div>
         <table id="pos-table">
             <thead>
-                <tr><th>COIN</th><th>SIDE</th><th>PNL</th><th>ROE</th><th>CONF</th></tr>
+                <tr>
+                    <th>COIN</th>
+                    <th>SIDE</th>
+                    <th>PNL</th>
+                    <th>ROE</th>
+                    <th>CONF%</th> </tr>
             </thead>
             <tbody></tbody>
         </table>
+        <div id="risk-report" style="font-size: 0.8em; color: #8b949e;"></div>
     </div>
 
     <div class="card">
-        <div class="header">🤖 SYSTEM ACTIVITY</div>
-        <div style="margin-bottom: 10px; font-size: 0.9em;">
-            >> <span id="activity" class="cyan">Scanning...</span>
+        <div class="header">🤖 SYSTEM ACTIVITY (TICKER)</div>
+        <div style="margin-bottom: 10px;">
+            >> <span id="activity" class="cyan">Initializing...</span>
         </div>
-        <div id="ticker-log" class="ticker">Waiting...</div>
+        <div id="ticker-log" class="ticker">
+            Waiting for updates...
+        </div>
 
-        <div class="header">📜 PERFORMANCE LOG</div>
-        <div id="closed-log" class="log">Waiting for closed trades...</div>
+        <div class="header">📜 PERFORMANCE HISTORY (PERSISTENT)</div>
+        <div id="closed-log" class="log">
+            <div style="padding:10px; text-align:center;">Loading History...</div>
+        </div>
     </div>
 
     <script>
-        fetch('/data').then(r => r.json()).then(data => {
-            if (!data || data.status === "BOOTING...") return;
-            document.getElementById('status').innerText = data.status;
-            document.getElementById('equity').innerText = "$" + data.equity;
-            document.getElementById('mode').innerText = data.mode;
-            document.getElementById('winrate').innerText = data.win_rate;
-            document.getElementById('activity').innerText = data.live_activity;
+        function updateDashboard() {
+            fetch('/data').then(r => r.json()).then(data => {
+                // 1. HEADER METRICS
+                document.getElementById('status').innerText = data.status || "ONLINE";
+                document.getElementById('equity').innerText = "$" + data.equity;
+                document.getElementById('cash').innerText = "$" + data.cash;
+                
+                let pnl = parseFloat(data.pnl);
+                let pnlEl = document.getElementById('pnl');
+                pnlEl.innerText = (pnl > 0 ? "+" : "") + data.pnl;
+                pnlEl.className = pnl >= 0 ? "green" : "red";
+                
+                document.getElementById('winrate').innerText = data.win_rate || "0/0 (0%)";
+                document.getElementById('mode').innerText = data.mode;
+                document.getElementById('session').innerText = data.session || "WAITING";
+                document.getElementById('activity').innerText = data.live_activity || "Idle";
 
-            let pnlVal = parseFloat(data.pnl);
-            let pnlEl = document.getElementById('pnl');
-            pnlEl.innerText = (pnlVal > 0 ? "+" : "") + data.pnl;
-            pnlEl.className = pnlVal >= 0 ? "green" : "red";
+                // 2. POSITIONS TABLE (Now handles 7 columns)
+                let tbody = document.querySelector("#pos-table tbody");
+                tbody.innerHTML = "";
+                
+                if (data.positions && data.positions !== "NO_TRADES") {
+                    let rows = data.positions.split("::");
+                    rows.forEach(row => {
+                        let parts = row.split("|");
+                        // Format: COIN|SIDE|PNL|ROE|ICON|TARGET|SCORE
+                        if (parts.length >= 4) {
+                            let coinName = parts[0];
+                            let tr = document.createElement("tr");
+                            let color = parseFloat(parts[2]) >= 0 ? "green" : "red";
+                            let icon = parts[4] || ""; 
+                            let link = `<a href="https://app.hyperliquid.xyz/trade/${coinName}" target="_blank">${icon} ${coinName}</a>`;
+                            let score = parts[6] || "---"; // Safe fallback if score missing
+                            
+                            tr.innerHTML = `<td>${link}</td><td>${parts[1]}</td><td class="${color}">$${parts[2]}</td><td class="${color}">${parts[3]}%</td><td class="gold">${score}</td>`;
+                            tbody.appendChild(tr);
+                        }
+                    });
+                } else {
+                    tbody.innerHTML = "<tr><td colspan='5' style='text-align:center; color:#555;'>NO ACTIVE TRADES</td></tr>";
+                }
 
-            let tbody = document.querySelector("#pos-table tbody");
-            tbody.innerHTML = "";
-            if (data.positions && data.positions !== "NO_TRADES") {
-                data.positions.split("::").forEach(row => {
-                    let p = row.split("|"); // 0:coin, 1:side, 2:pnl, 3:roe, 4:icon, 5:target, 6:logic%
-                    let color = parseFloat(p[2]) >= 0 ? "green" : "red";
-                    let conf = parseInt(p[6] || 0);
-                    let confClass = conf > 75 ? "green" : (conf > 40 ? "gold" : "gray");
+                if (data.risk_report) {
+                    document.getElementById('risk-report').innerText = data.risk_report.replace(/::/g, " | ");
+                }
+
+                // 3. LOGIC SPLIT (TICKER vs HISTORY)
+                if (data.trade_history) {
+                    let allLogs = data.trade_history.split("||").reverse();
                     
-                    let tr = document.createElement("tr");
-                    tr.innerHTML = `
-                        <td>${p[4]} ${p[0]}</td>
-                        <td>${p[1]}</td>
-                        <td class="${color}">$${p[2]}</td>
-                        <td class="${color}">${p[3]}%</td>
-                        <td class="${confClass}">${conf}%</td>
-                    `;
-                    tbody.appendChild(tr);
-                });
-            } else {
-                tbody.innerHTML = "<tr><td colspan='5' style='text-align:center;'>NO ACTIVE TRADES</td></tr>";
-            }
+                    // Top 3 for Ticker
+                    let tickerDiv = document.getElementById('ticker-log');
+                    let top3 = allLogs.slice(0, 3);
+                    tickerDiv.innerHTML = top3.join("<br>");
+                    
+                    // Filter for Performance Box
+                    let closedDiv = document.getElementById('closed-log');
+                    let closedTrades = allLogs.filter(line => {
+                        let u = line.toUpperCase();
+                        return u.includes("PROFIT") || u.includes("LOSS") || u.includes("SECURED") || 
+                               u.includes("STOP") || u.includes("CUT") || u.includes("WIN") || u.includes("LOSE");
+                    });
+                    
+                    if (closedTrades.length > 0) {
+                        closedDiv.innerHTML = closedTrades.join("<br>");
+                    } else {
+                        closedDiv.innerHTML = "<div style='text-align:center; padding:10px; color:#555;'>NO CLOSED TRADES YET</div>";
+                    }
+                }
+            }).catch(err => {
+                console.error("Dashboard Fetch Error:", err);
+                document.getElementById('status').innerText = "VISUAL CONNECTION LOST";
+            });
+        }
 
-            if (data.trade_history) {
-                let logs = data.trade_history.split("||").reverse();
-                document.getElementById('ticker-log').innerHTML = logs.slice(0, 3).join("<br>");
-                let closed = logs.filter(l => ["PROFIT","LOSS","SECURED","STOP","WIN"].some(k => l.toUpperCase().includes(k)));
-                document.getElementById('closed-log').innerHTML = closed.length ? closed.join("<br>") : "NO TRADES";
-            }
-        });
+        // Run immediately and then every 2 seconds
+        updateDashboard();
+        setInterval(updateDashboard, 2000);
     </script>
 </body>
 </html>
 """
 
 @app.route('/')
-def index(): return render_template_string(HTML_TEMPLATE)
+def index():
+    return render_template_string(HTML_TEMPLATE)
 
 @app.route('/data')
 def data():
     try:
-        if os.path.exists(STATE_FILE):
-            with open(STATE_FILE, "r") as f: return jsonify(json.load(f))
-        return jsonify({"status": "BOOTING..."})
-    except: return jsonify({"status": "ERROR"})
+        # Reads the JSON generated by main.py
+        with open("dashboard_state.json", "r") as f:
+            return jsonify(json.load(f))
+    except:
+        # Fallback if file is being written or missing
+        return jsonify({"status": "RESTORING VISUALS...", "equity": "0.00", "cash": "0.00", "pnl": "0.00"})
+
+@app.route('/health')
+def health():
+    return jsonify({"status": "healthy"})
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
