@@ -1,10 +1,4 @@
-from datetime import datetime, timezone
-
-class Seasonality:
-    def __init__(self):
-        print(">> Seasonality Engine (Micro-Cycles) Loaded")
-
-    def get_multiplier(self, coin_type):
+def get_multiplier(self, coin_type):
         """
         Returns a Risk Multiplier based on Day/Hour/Minute.
         coin_type: "PRINCE" (SOL/SUI) or "MEME" (DOGE/WIF)
@@ -18,7 +12,10 @@ class Seasonality:
         note = "Standard"
 
         # 1. WEEKEND LOGIC (Friday 20:00 UTC - Sunday 22:00 UTC)
-        is_weekend = (weekday == 4 and hour >= 20) or (weekday > 4) or (weekday == 6 and hour < 22)
+        # FIX: Changed (weekday > 4) to (weekday == 5) so Sunday logic works
+        is_weekend = (weekday == 4 and hour >= 20) or \
+                     (weekday == 5) or \
+                     (weekday == 6 and hour < 22)
         
         if is_weekend:
             if coin_type == "PRINCE":
@@ -30,7 +27,7 @@ class Seasonality:
         
         # 2. INTRADAY "KILL ZONES" (High Volatility Windows)
         # London/NY Overlap (13:00 - 16:00 UTC) - Prime time for all coins
-        if 13 <= hour < 16:
+        elif 13 <= hour < 16:  # Changed 'if' to 'elif' so Weekend logic takes priority if overlapping
             mult *= 1.2
             note = "NY/London Overlap"
         
@@ -42,8 +39,10 @@ class Seasonality:
 
         # 4. MICRO-BURST (Turn of the Candle)
         # Algorithms trade at :00 and :30.
+        # This acts as a bonus modifier on top of the others.
         if minute <= 10 or (30 <= minute <= 40):
             mult *= 1.1
-            note += " + Micro-Burst"
+            if note == "Standard": note = "Micro-Burst"
+            else: note += " + Micro-Burst"
 
         return {"mult": mult, "note": note}
