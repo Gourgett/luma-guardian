@@ -2,29 +2,20 @@ import time
 
 class DeepSea:
     def __init__(self):
-        print(">> DEEP SEA: Trailing Logic Restored (1% Gap)")
+        print(">> DEEP SEA: Ratchet System Loaded (Mode: AGGRESSIVE JUMP)")
         self.secured_coins = []
         self.peak_roe = {}
         self.trauma_record = {}
-        # TRAUMA: If a coin hits stop loss, ignore it for 5 mins
-        self.TRAUMA_DURATION = 300  
 
     def check_trauma(self, hands, coin):
-        """
-        Prevents 'Revenge Trading'. If we just lost on a coin, 
-        block it for 5 minutes.
-        """
-        if coin in self.trauma_record:
-            last_loss_time = self.trauma_record.get(coin, 0)
-            if time.time() - last_loss_time < self.TRAUMA_DURATION:
-                return True
-            else:
-                del self.trauma_record[coin]
+        # 5-Minute Cooldown for LOSSES only.
+        last_loss = self.trauma_record.get(coin, 0)
+        if time.time() - last_loss < 300:
+            return True # BLOCK TRADES
         return False
 
     def manage_positions(self, hands, positions, fleet_config):
         events = []
-        
         # Cleanup peaks for closed positions
         current_coins = [p['coin'] for p in positions]
         for c in list(self.peak_roe.keys()):
@@ -32,63 +23,72 @@ class DeepSea:
 
         for p in positions:
             coin = p['coin']
-            if coin not in fleet_config: continue
-
-            # Extract Data
             pnl = float(p['pnl'])
             size = float(p['size'])
             entry = float(p['entry'])
+
+            if coin not in fleet_config: continue
+
+            rules = fleet_config[coin]
+            leverage = float(rules['lev']) # Ensure float
             
-            # Real Leverage
-            lev = float(p.get('leverage', fleet_config[coin]['lev']))
-            
-            # Calculate ROE (decimal)
-            margin = (abs(size) * entry) / lev if lev > 0 else 1
-            roe = pnl / margin if margin > 0 else 0.0
-            roe_pct = roe * 100 
+            # CALCULATE ROE
+            margin = (abs(size) * entry) / leverage if leverage > 0 else 1
+            if margin == 0: continue
+            roe = pnl / margin
 
             # TRACK PEAK ROE
             if coin not in self.peak_roe: self.peak_roe[coin] = roe
             else:
                 if roe > self.peak_roe[coin]: self.peak_roe[coin] = roe
-            
+
             peak = self.peak_roe[coin]
 
-            # --- CONFIG RULES ---
-            # Stop Loss is -4% (-0.04)
-            stop_loss_decimal = fleet_config[coin].get('stop_loss', 0.04)
-            current_floor = -(stop_loss_decimal)
+            # --- AGGRESSIVE JUMP STRATEGY ---
 
-            # --- YOUR LOGIC ---
-            
-            # 1. BREAKEVEN (Trigger at 1.0%)
-            # Logic: If peak hits 1%, move stop to 0.2% (covers fees).
+            # 1. HARD STOP LOSS (Updated to use Config -4%)
+            # We use the config value to ensure the new Safety Protocol (-0.04) is respected.
+            stop_loss_val = rules.get('stop_loss', 0.04)
+            current_floor = -(stop_loss_val)
+
+            # 2. EARLY BREAKEVEN (Trigger at 1.0%)
+            # Logic: Lock 0.2% immediately to cover fees.
             if peak >= 0.01:
                 current_floor = 0.002 
 
-            # 2. TRAILING ACTIVATION (Trigger at 2.0%)
-            # Logic: Jump to 1.5%, then trail by 1%.
+            # 3. THE "JUMP" TRAIL (Trigger at 2.0%)
+            # Logic: If we hit 2%, we force the stop to 1.5%.
+            # We maintain this 1.5% floor until the "1% Gap" naturally catches up
+            # (which happens at 2.5% peak). Then we trail with the 1% gap.
             if peak >= 0.02:
-                # Calculate the 1% trail: (Peak - 0.01)
-                trail_value = peak - 0.01
-                # Enforce the 1.5% minimum jump
-                current_floor = max(0.015, trail_value)
+                # Math: Choose the higher of (1.5%) OR (Peak - 1%)
+                current_floor = max(0.015, peak - 0.01)
 
-            # --- EXECUTION ---
+            # CHECK EXIT
             if roe < current_floor:
                 tag = "STOP LOSS" if current_floor < 0 else "PROFIT SECURED"
                 
                 # Only record Trauma if it was a LOSS
                 if current_floor < 0:
                     self.trauma_record[coin] = time.time()
-                
+
+                # HARD SELL EXECUTION
                 hands.place_market_order(coin, "SELL" if size > 0 else "BUY", abs(size))
-                events.append(f"💰 {tag}: {coin} ({pnl:.2f} | {roe_pct:.1f}%)")
+                
+                # LOGGING
+                pnl_str = f"{pnl:+.2f}"
+                events.append(f"💰 {tag}: {coin} ({pnl_str} | {roe*100:.1f}%)")
                 
                 if coin in self.secured_coins: self.secured_coins.remove(coin)
 
-            # Visual Marker for Dashboard
+            # VISUAL MARKER
             elif current_floor > 0 and coin not in self.secured_coins:
                 self.secured_coins.append(coin)
+
+            # Emergency Hard Stop (Sanity Check)
+            if roe < -0.40:
+                hands.place_market_order(coin, "SELL" if size > 0 else "BUY", abs(size))
+                self.trauma_record[coin] = time.time()
+                events.append(f"xx EMERGENCY CUT: {coin}")
 
         return events
