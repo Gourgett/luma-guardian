@@ -9,7 +9,7 @@ from hyperliquid.utils import constants
 
 class Hands:
     def __init__(self):
-        print(">> HANDS ARMED: Exchange Connected")
+        print(">> HANDS ARMED: Exchange Connected (v3.5: DYNAMIC LEV)")
         self.config = self._load_config()
         
         # Priority: Railway Env Var -> server_config.json
@@ -43,6 +43,9 @@ class Hands:
         except: return {}
 
     def set_leverage_all(self, coins, leverage):
+        """
+        V4.3 Compatible: Accepts dynamic leverage (3x or 5x).
+        """
         print(f">> HANDS: Enforcing {leverage}x Leverage on Fleet...")
         for coin in coins:
             try:
@@ -51,7 +54,7 @@ class Hands:
             except Exception as e:
                 # The Fix: No more silent failing. We print the error.
                 print(f"xx LEVERAGE FAILED for {coin}: {e}")
-        print(">> HANDS: Leverage Synced.")
+        # print(">> HANDS: Leverage Synced.")
 
     def cancel_all_orders(self, coin):
         try:
@@ -85,6 +88,7 @@ class Hands:
         px_prec, sz_prec = self._get_precision(coin)
         final_price = round(price, px_prec)
 
+        # Main.py passes size in USD (Notional). We convert to Coins here.
         raw_size = size_usd / final_price
         if sz_prec == 0:
             final_size = int(raw_size)
@@ -118,7 +122,7 @@ class Hands:
     def place_market_order(self, coin, side, size_coins):
         """
         Executes Market Order.
-        Returns: TRUE if successful, FALSE if rejected.
+        Used by DeepSea for Stop Losses and Take Profits.
         """
         is_buy = True if side == "BUY" else False
         try:
@@ -142,4 +146,5 @@ class Hands:
             return False
 
     def place_stop(self, coin, price):
+        # Placeholder if needed later
         pass
