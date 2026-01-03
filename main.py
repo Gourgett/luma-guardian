@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 warnings.simplefilter("ignore")
 
 # ==============================================================================
-#  LUMA SINGULARITY [V3.9: LOGIC RESTORED & LEV FIX]
+#  LUMA SINGULARITY [V4.0: REAL-TIME DATA INTEGRITY]
 # ==============================================================================
 
 # --- PATH CONFIGURATION ---
@@ -21,7 +21,6 @@ CONFIG_FILE = "server_config.json"
 ANCHOR_FILE = os.path.join(DATA_DIR, "equity_anchor.json")
 VOLUME_FILE = os.path.join(DATA_DIR, "daily_volume.json")
 HISTORY_FILE = os.path.join(DATA_DIR, "trade_logs.json")
-# Restore Archive Path so Page 2 works
 ARCHIVE_FILE = os.path.join(DATA_DIR, "luma_archive.txt")
 SCORES_FILE = os.path.join(DATA_DIR, "active_scores.json")
 BTC_TICKER = "BTC"
@@ -38,29 +37,25 @@ FLEET_CONFIG = {
 
 STARTING_EQUITY = 0.0
 
-# --- HISTORY FIX (Prevents Data Deletion) ---
+# --- HISTORY FIX ---
 def load_history():
     try:
         if os.path.exists(HISTORY_FILE):
             with open(HISTORY_FILE, 'r') as f:
                 data = json.load(f)
-                if isinstance(data, list):
-                    return deque(data, maxlen=60)
+                if isinstance(data, list): return deque(data, maxlen=60)
         return deque(maxlen=60)
     except: return deque(maxlen=60)
 
 def save_history(new_event=None):
     try:
-        # 1. PERMANENT VAULT (Restored)
         if new_event:
             try:
                 with open(ARCHIVE_FILE, "a", encoding="utf-8") as f:
                     clean_msg = str(new_event).replace("\n", " ")
                     f.write(f"{clean_msg}\n")
-            except Exception as e:
-                print(f"xx ARCHIVE FAILED: {e}")
+            except Exception as e: print(f"xx ARCHIVE FAILED: {e}")
 
-        # 2. DASHBOARD RAM
         current_data = []
         if os.path.exists(HISTORY_FILE):
             with open(HISTORY_FILE, 'r') as f:
@@ -68,21 +63,14 @@ def save_history(new_event=None):
                 except: current_data = []
         
         if not isinstance(current_data, list): current_data = []
-        
-        if new_event:
-            current_data.append(new_event)
-            
-        if len(current_data) > 60:
-            current_data = current_data[-60:]
+        if new_event: current_data.append(new_event)
+        if len(current_data) > 60: current_data = current_data[-60:]
             
         with open(HISTORY_FILE, 'w') as f:
             json.dump(current_data, f)
             f.flush(); os.fsync(f.fileno())
-            
         return deque(current_data, maxlen=60)
-    except Exception as e: 
-        print(f"xx HISTORY SAVE FAILED: {e}")
-        return deque(maxlen=60)
+    except: return deque(maxlen=60)
 
 TRADE_HISTORY = load_history()
 LIVE_ACTIVITY = "System Initializing..."
@@ -93,14 +81,12 @@ def load_scores():
     global TRADE_SCORES
     try:
         if os.path.exists(SCORES_FILE):
-            with open(SCORES_FILE, 'r') as f:
-                TRADE_SCORES = json.load(f)
+            with open(SCORES_FILE, 'r') as f: TRADE_SCORES = json.load(f)
     except: TRADE_SCORES = {}
 
 def save_scores():
     try:
-        with open(SCORES_FILE, 'w') as f:
-            json.dump(TRADE_SCORES, f)
+        with open(SCORES_FILE, 'w') as f: json.dump(TRADE_SCORES, f)
     except: pass
 
 load_scores()
@@ -112,8 +98,7 @@ def load_volume():
         if os.path.exists(VOLUME_FILE):
             with open(VOLUME_FILE, 'r') as f:
                 data = json.load(f)
-                if data.get("last_reset_day") != datetime.now(timezone.utc).day:
-                    return default_stats
+                if data.get("last_reset_day") != datetime.now(timezone.utc).day: return default_stats
                 return data
         return default_stats
     except: return default_stats
@@ -121,9 +106,7 @@ def load_volume():
 def save_volume():
     global DAILY_STATS
     try:
-        with open(VOLUME_FILE, 'w') as f:
-            json.dump(DAILY_STATS, f)
-            f.flush(); os.fsync(f.fileno())
+        with open(VOLUME_FILE, 'w') as f: json.dump(DAILY_STATS, f); f.flush(); os.fsync(f.fileno())
     except: pass
 
 DAILY_STATS = load_volume()
@@ -143,8 +126,7 @@ def load_anchor(current_equity):
 def update_heartbeat(status="ALIVE"):
     try:
         temp_file = "heartbeat.tmp"
-        with open(temp_file, "w") as f:
-            json.dump({"last_beat": time.time(), "status": status}, f)
+        with open(temp_file, "w") as f: json.dump({"last_beat": time.time(), "status": status}, f)
         os.replace(temp_file, "heartbeat.json")
     except: pass
 
@@ -162,6 +144,7 @@ def update_stats(pnl_value):
     if pnl_value > 0: DAILY_STATS["wins"] += 1
     save_volume()
 
+# --- V4.0: EXTRACT REAL LEVERAGE FROM API ---
 def normalize_positions(raw_positions):
     clean_pos = []
     if not raw_positions: return []
@@ -177,7 +160,20 @@ def normalize_positions(raw_positions):
             entry = float(p.get('entryPx') or p.get('entry_price') or 0)
             pnl = float(p.get('unrealizedPnl') or 0)
             
-            clean_pos.append({"coin": coin, "size": size, "entry": entry, "pnl": pnl})
+            # --- REAL LEVERAGE EXTRACTION ---
+            # Hyperliquid returns leverage like: {"type": "cross", "value": 5}
+            raw_lev = p.get('leverage', {})
+            actual_leverage = raw_lev.get('value', 1) 
+            lev_type = raw_lev.get('type', 'cross')
+            
+            clean_pos.append({
+                "coin": coin, 
+                "size": size, 
+                "entry": entry, 
+                "pnl": pnl,
+                "leverage": actual_leverage, # Real Exchange Data
+                "margin_type": lev_type      # Real Type (Cross/Iso)
+            })
         except: continue
     return clean_pos
 
@@ -193,7 +189,6 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
             save_history(final_msg)
         
         DISPLAY_HISTORY = load_history()
-
         if activity_event: LIVE_ACTIVITY = f">> {activity_event}"
 
         history_str = "||".join(list(DISPLAY_HISTORY))
@@ -207,21 +202,21 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
             pos_lines = []
             for p in positions:
                 coin, size, entry, pnl_val = p['coin'], p['size'], p['entry'], p['pnl']
-                side = "LONG" if size > 0 else "SHORT"
-                lev_display = FLEET_CONFIG.get(coin, {}).get('lev', 10)
-                if mode == "GOD_MODE" and FLEET_CONFIG.get(coin, {}).get('type') == "MEME": lev_display = 10
                 
-                margin = (abs(size) * entry) / lev_display
+                # --- V4.0: USE REAL LEVERAGE ---
+                real_lev = p.get('leverage', 1) # This comes from the API now
+                
+                side = "LONG" if size > 0 else "SHORT"
+                margin = (abs(size) * entry) / real_lev if real_lev > 0 else 0
                 roe = (pnl_val / margin) * 100 if margin > 0 else 0.0
                 icon = "🔒" if coin in secured_list else ""
-                target = entry * (1 + (1/lev_display)) if side == "LONG" else entry * (1 - (1/lev_display))
+                target = entry * (1 + (1/real_lev)) if side == "LONG" else entry * (1 - (1/real_lev))
                 t_str_px = f"{target:.6f}" if target < 1.0 else f"{target:.2f}"
                 
                 score_display = f"{int(TRADE_SCORES.get(coin, 50))}%"
                 
-                # --- PREPARING FOR DASHBOARD V3.3 ---
-                # Added 'lev_display' to the data stream so we can see it on the dashboard later
-                pos_lines.append(f"{coin}|{side}|{pnl_val:.2f}|{roe:.1f}|{icon}|{t_str_px}|{score_display}|{lev_display}x")
+                # SEND REAL LEV TO DASHBOARD
+                pos_lines.append(f"{coin}|{side}|{pnl_val:.2f}|{roe:.1f}|{icon}|{t_str_px}|{score_display}|{real_lev}x")
                 
                 risk_report.append(f"{coin}|{side}|{margin:.2f}|{'SECURED' if coin in secured_list else 'RISK ON'}|{entry if coin in secured_list else 'Stop Loss'}")
             pos_str = "::".join(pos_lines)
@@ -262,7 +257,6 @@ def calculate_logic_score(coin, candles, session, regime):
             curr_rng = float(candles[-1]['high']) - float(candles[-1]['low'])
             prev_rng = float(candles[-2]['high']) - float(candles[-2]['low'])
             if prev_rng > 0 and curr_rng > prev_rng * 1.5: score += 5
-            
     except: pass
     return min(max(int(score), 0), 100)
 
@@ -289,7 +283,7 @@ except Exception as e:
 
 def main_loop():
     global STARTING_EQUITY
-    print("🦅 LUMA SINGULARITY [V3.9 SYSTEM LIVE]")
+    print("🦅 LUMA SINGULARITY [V4.0: REAL LEVERAGE]")
     try:
         update_heartbeat("BOOTING")
         update_dashboard(0, 0, "SYSTEM BOOTING...", [], "STANDARD", [], activity_event="Connecting...")
@@ -303,7 +297,7 @@ def main_loop():
         
         if not address: return
 
-        msg.send("info", "🦅 **LUMA ONLINE:** SYSTEM LIVE.")
+        msg.send("info", "🦅 **LUMA ONLINE:** V4.0 LIVE.")
         last_history_check = 0; cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}; leverage_memory = {}
         
         known_positions = {}
@@ -331,13 +325,13 @@ def main_loop():
                 if user_state:
                     equity = float(user_state.get('marginSummary', {}).get('accountValue', 0))
                     cash = float(user_state.get('withdrawable', 0))
+                    # This now includes real leverage data
                     clean_positions = normalize_positions(user_state.get('assetPositions', []))
                     open_orders = user_state.get('openOrders', [])
                     api_success = True
             except: pass
             
-            if not api_success:
-                 time.sleep(1); continue
+            if not api_success: time.sleep(1); continue
 
             if STARTING_EQUITY == 0.0 and equity > 0: STARTING_EQUITY = load_anchor(equity)
             current_roe_pct = ((equity - STARTING_EQUITY) / (STARTING_EQUITY if STARTING_EQUITY > 0 else 1.0)) * 100
@@ -374,20 +368,17 @@ def main_loop():
                 target_lev = 10 if risk_mode == "GOD_MODE" and rules['type'] == "MEME" else (5 if risk_mode == "RECOVERY" or shield_active else rules['lev'])
 
                 if coin not in active_coins and leverage_memory.get(coin) != int(target_lev):
-                    # --- V3.9 FIX: DIAGNOSE LEVERAGE FAILURE ---
+                    # --- ATTEMPT LEV UPDATE WITH LOGGING ---
                     try: 
                         hands.set_leverage_all([coin], leverage=int(target_lev))
                         leverage_memory[coin] = int(target_lev)
                     except Exception as e:
-                        # Print error to log so we know WHY it stays at 3x
-                        print(f"xx LEV UPDATE FAILED ({coin}): {e}")
-                    # -------------------------------------------
+                        print(f"xx LEV FAIL ({coin}): {e}") # Diag log
 
                 if ratchet.check_trauma(hands, coin) or next((p for p in clean_positions if p['coin'] == coin), None): continue
                 
-                # --- ANTI-STACKING (Original Logic Check) ---
-                if time.time() - last_action_time.get(coin, 0) < 30:
-                    continue
+                # --- ANTI-STACKING FIX ---
+                if time.time() - last_action_time.get(coin, 0) < 30: continue
 
                 try: candles = vision.get_candles(coin, "1h")
                 except: candles = []
@@ -419,17 +410,14 @@ def main_loop():
                     base_size = equity * 0.11 * season.get_multiplier(rules['type']).get('mult', 1.0)
                     final_margin_usd = min(base_size, wallet_edging_cap)
                     final_margin_usd = max(final_margin_usd, 10.0)
-                    
                     final_sz_notional = final_margin_usd * target_lev
                     final_sz = round(final_sz_notional, 2)
 
                     if oracle.consult(coin, proposal['source'], proposal['price'], f"Session: {session_name}"):
                         msg_txt = f"OPEN {coin} ({proposal['source']}) Margin:${final_margin_usd:.0f} [Score:{logic_score}]"
                         if hands.place_trap(coin, proposal['side'], proposal['price'], final_sz):
-                            # --- V3.9 CRITICAL FIX: RESET TIMER ---
-                            # This completes the logic from line 389
+                            # --- CRITICAL FIX: RESET TIMER ---
                             last_action_time[coin] = time.time()
-                            # --------------------------------------
                             msg.notify_trade(coin, proposal['source'], proposal['price'], final_sz)
                             TRADE_SCORES[coin] = logic_score
                             save_scores()
