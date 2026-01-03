@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 warnings.simplefilter("ignore")
 
 # ==============================================================================
-#  LUMA SINGULARITY [V4.0: REAL-TIME DATA INTEGRITY]
+#   LUMA SINGULARITY [V4.1: DYNAMIC LOGIC & SAFETY PROTOCOLS]
 # ==============================================================================
 
 # --- PATH CONFIGURATION ---
@@ -161,7 +161,6 @@ def normalize_positions(raw_positions):
             pnl = float(p.get('unrealizedPnl') or 0)
             
             # --- REAL LEVERAGE EXTRACTION ---
-            # Hyperliquid returns leverage like: {"type": "cross", "value": 5}
             raw_lev = p.get('leverage', {})
             actual_leverage = raw_lev.get('value', 1) 
             lev_type = raw_lev.get('type', 'cross')
@@ -204,7 +203,7 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
                 coin, size, entry, pnl_val = p['coin'], p['size'], p['entry'], p['pnl']
                 
                 # --- V4.0: USE REAL LEVERAGE ---
-                real_lev = p.get('leverage', 1) # This comes from the API now
+                real_lev = p.get('leverage', 1) 
                 
                 side = "LONG" if size > 0 else "SHORT"
                 margin = (abs(size) * entry) / real_lev if real_lev > 0 else 0
@@ -283,7 +282,7 @@ except Exception as e:
 
 def main_loop():
     global STARTING_EQUITY
-    print("🦅 LUMA SINGULARITY [V4.0: REAL LEVERAGE]")
+    print("🦅 LUMA SINGULARITY [V4.1: DYNAMIC LOGIC]")
     try:
         update_heartbeat("BOOTING")
         update_dashboard(0, 0, "SYSTEM BOOTING...", [], "STANDARD", [], activity_event="Connecting...")
@@ -297,7 +296,7 @@ def main_loop():
         
         if not address: return
 
-        msg.send("info", "🦅 **LUMA ONLINE:** V4.0 LIVE.")
+        msg.send("info", "🦅 **LUMA ONLINE:** V4.1 LIVE (Dynamic Tiers Active).")
         last_history_check = 0; cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}; leverage_memory = {}
         
         known_positions = {}
@@ -325,7 +324,6 @@ def main_loop():
                 if user_state:
                     equity = float(user_state.get('marginSummary', {}).get('accountValue', 0))
                     cash = float(user_state.get('withdrawable', 0))
-                    # This now includes real leverage data
                     clean_positions = normalize_positions(user_state.get('assetPositions', []))
                     open_orders = user_state.get('openOrders', [])
                     api_success = True
@@ -339,12 +337,23 @@ def main_loop():
             if 1.0 < equity < 300.0:
                 msg.send("errors", "CRITICAL: EQUITY < $300."); time.sleep(3600); continue
 
-            risk_mode, titan_active, shield_active = "STANDARD", current_roe_pct >= 12.0, current_roe_pct <= -10.0
-            status_msg = f"🛡️ SHIELD ACTIVE | ROE:{current_roe_pct:.2f}%" if shield_active else f"Mode:STANDARD (ROE:{current_roe_pct:.2f}%)"
-            if shield_active: risk_mode = "RECOVERY"
-            elif not shield_active:
-                if equity < 412.0: risk_mode = "RECOVERY"
-                elif current_roe_pct >= 5.0: risk_mode = "GOD_MODE"
+            # --- V4.1: LOGIC GATES FOR RISK MODES ---
+            # Recovery: < 0% ROE
+            # Standard: 0% - 12% ROE
+            # God Mode: > 12% ROE (Earned)
+            
+            shield_active = current_roe_pct < 0.0
+            
+            if current_roe_pct >= 12.0: risk_mode = "GOD_MODE"
+            elif shield_active or risk_mode == "RECOVERY": risk_mode = "RECOVERY"
+            else: risk_mode = "STANDARD"
+
+            status_msg = f"🛡️ SHIELD ACTIVE | ROE:{current_roe_pct:.2f}%" if shield_active else f"Mode:{risk_mode} (ROE:{current_roe_pct:.2f}%)"
+            
+            # --- WALLET EDGING RULE (70/30) ---
+            # 30% Secure Pot (LOCKED). 70% Active Pool.
+            active_pool = equity * 0.70
+            max_bot_allocation = active_pool / 6  # ~11.6% of total equity
 
             current_coins = [p['coin'] for p in clean_positions]
             
@@ -361,23 +370,12 @@ def main_loop():
             print(f">> [{time.strftime('%H:%M:%S')}] {status_msg}", end='\r')
 
             active_coins = [p['coin'] for p in clean_positions]
-            wallet_edging_cap = (equity * 0.70) / 6
 
             for coin, rules in FLEET_CONFIG.items():
                 update_heartbeat("SCANNING")
-                target_lev = 10 if risk_mode == "GOD_MODE" and rules['type'] == "MEME" else (5 if risk_mode == "RECOVERY" or shield_active else rules['lev'])
-
-                if coin not in active_coins and leverage_memory.get(coin) != int(target_lev):
-                    # --- ATTEMPT LEV UPDATE WITH LOGGING ---
-                    try: 
-                        hands.set_leverage_all([coin], leverage=int(target_lev))
-                        leverage_memory[coin] = int(target_lev)
-                    except Exception as e:
-                        print(f"xx LEV FAIL ({coin}): {e}") # Diag log
-
-                if ratchet.check_trauma(hands, coin) or next((p for p in clean_positions if p['coin'] == coin), None): continue
                 
-                # --- ANTI-STACKING FIX ---
+                # We skip leverage set here now, we do it dynamically based on score below
+                if ratchet.check_trauma(hands, coin) or next((p for p in clean_positions if p['coin'] == coin), None): continue
                 if time.time() - last_action_time.get(coin, 0) < 30: continue
 
                 try: candles = vision.get_candles(coin, "1h")
@@ -386,37 +384,71 @@ def main_loop():
                 current_price = float(candles[-1].get('close') or 0)
                 update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, session=session_name, activity_event=f"Scanning {coin}...")
 
+                # --- V4.1: DYNAMIC LEVERAGE & SIZE CALCULATION ---
+                # We must calculate score FIRST to determine Leverage Tier
+                logic_score = calculate_logic_score(coin, candles, session_name, regime)
+                
+                # Defaults
+                target_lev = 5
+                size_multiplier = 1.0
+                
+                # Logic Stack
+                if logic_score >= 99:
+                    # Tier 4: Override (Sniper)
+                    target_lev = 10
+                    size_multiplier = 1.0
+                elif risk_mode == "GOD_MODE" and logic_score >= 60:
+                    # Tier 3: God Mode (Earned)
+                    target_lev = 10
+                    size_multiplier = 1.0
+                elif logic_score < 60:
+                    # Tier 1: Safety Protocol (Low Confidence)
+                    target_lev = 3
+                    size_multiplier = 0.5
+                else:
+                    # Tier 2: Standard Ops
+                    target_lev = 5
+                    size_multiplier = 1.0
+
+                # Apply Dynamic Leverage
+                if leverage_memory.get(coin) != target_lev:
+                    try: 
+                        hands.set_leverage_all([coin], leverage=int(target_lev))
+                        leverage_memory[coin] = int(target_lev)
+                    except Exception as e:
+                        print(f"xx LEV FAIL ({coin}): {e}")
+
                 pending = next((o for o in open_orders if o.get('coin') == coin), None)
                 if pending:
                     try:
                         order_price = float(pending.get('limitPx') or 0)
                         if abs(current_price - order_price) / order_price > 0.005:
                             hands.cancel_all_orders(coin)
-                        else:
-                            update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, ratchet.secured_coins, session=session_name, activity_event=f"Holding Trap {coin}...")
-                            continue 
+                        else: continue 
                     except: continue
 
                 proposal, trend = None, predator.analyze_divergence(candles, coin)
                 whale_sig, xeno_sig = whale.hunt_turtle(candles) or whale.hunt_ghosts(candles), xeno.hunt(coin, candles)
 
-                if xeno_sig == "ATTACK" and (not (titan_active or shield_active) or trend == "REAL_PUMP"):
+                if xeno_sig == "ATTACK" and (not (risk_mode == "GOD_MODE") or trend == "REAL_PUMP"):
                     proposal = {"source": "SNIPER", "side": "BUY", "price": current_price * 0.999}
                 if whale_sig and trend != "REAL_PUMP":
                     proposal = {"source": whale_sig['type'], "side": whale_sig['side'], "price": whale_sig['price']}
 
                 if proposal:
-                    logic_score = calculate_logic_score(coin, candles, session_name, regime)
-                    base_size = equity * 0.11 * season.get_multiplier(rules['type']).get('mult', 1.0)
-                    final_margin_usd = min(base_size, wallet_edging_cap)
+                    # Calculate Final Position Size based on Wallet Edging & Logic Tier
+                    base_size = max_bot_allocation
+                    final_margin_usd = base_size * size_multiplier
+                    
+                    # Safety Floor
                     final_margin_usd = max(final_margin_usd, 10.0)
+                    
                     final_sz_notional = final_margin_usd * target_lev
                     final_sz = round(final_sz_notional, 2)
 
                     if oracle.consult(coin, proposal['source'], proposal['price'], f"Session: {session_name}"):
-                        msg_txt = f"OPEN {coin} ({proposal['source']}) Margin:${final_margin_usd:.0f} [Score:{logic_score}]"
+                        msg_txt = f"OPEN {coin} ({proposal['source']}) Margin:${final_margin_usd:.0f} Lev:{target_lev}x [Score:{logic_score}]"
                         if hands.place_trap(coin, proposal['side'], proposal['price'], final_sz):
-                            # --- CRITICAL FIX: RESET TIMER ---
                             last_action_time[coin] = time.time()
                             msg.notify_trade(coin, proposal['source'], proposal['price'], final_sz)
                             TRADE_SCORES[coin] = logic_score
