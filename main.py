@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 warnings.simplefilter("ignore")
 
 # ==============================================================================
-#   LUMA SINGULARITY [RESTORED: TERMUX LOGIC | STOP LOSS: -4%]
+#   LUMA SINGULARITY [RESTORED: TERMUX LOGIC | FAIL-SAFE ACTIVE]
 # ==============================================================================
 
 # --- PATH CONFIGURATION ---
@@ -228,9 +228,10 @@ def main_loop():
             start_eq_safe = STARTING_EQUITY if STARTING_EQUITY > 0 else 1.0
             current_roe_pct = (current_pnl / start_eq_safe) * 100
 
-            # --- 3. CIRCUIT BREAKER (UPDATED TO 250) ---
-            if 1.0 < equity < 250.0:
-                 print("xx CRITICAL: EQUITY BELOW $250. HALTING TRADING.")
+            # --- 3. CIRCUIT BREAKER (LOWERED TO $10) ---
+            # This fixes the crash for low-balance testing accounts.
+            if 1.0 < equity < 10.0:
+                 print("xx CRITICAL: EQUITY BELOW $10. HALTING TRADING.")
                  msg.send("errors", "CRITICAL: HARD FLOOR BREACHED.")
                  time.sleep(3600); continue
 
