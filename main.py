@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 warnings.simplefilter("ignore")
 
 # ==============================================================================
-#   LUMA SINGULARITY [V4.3: GUARDIAN LOOP & ASYMMETRY FIX]
+#   LUMA SINGULARITY [V4.3.1: DEBUG MODE ENABLED]
 # ==============================================================================
 
 # --- PATH CONFIGURATION ---
@@ -282,7 +282,7 @@ except Exception as e:
 
 def main_loop():
     global STARTING_EQUITY
-    print("🦅 LUMA SINGULARITY [V4.3: GUARDIAN LOOP ACTIVE]")
+    print("🦅 LUMA SINGULARITY [V4.3.1: DEBUG ENABLED]")
     try:
         update_heartbeat("BOOTING")
         update_dashboard(0, 0, "SYSTEM BOOTING...", [], "STANDARD", [], activity_event="Connecting...")
@@ -296,7 +296,7 @@ def main_loop():
         
         if not address: return
 
-        msg.send("info", "🦅 **LUMA ONLINE:** V4.3 LIVE (Guardian Protocol + Asymmetry Fix).")
+        msg.send("info", "🦅 **LUMA ONLINE:** V4.3.1 LIVE (Debug Mode Enabled).")
         last_history_check = 0; cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}; leverage_memory = {}
         
         known_positions = {}
@@ -431,12 +431,15 @@ def main_loop():
                         # Tier 1: Trash Bin (Low Confidence Only)
                         target_lev = 3; size_multiplier = 0.5
 
-                    # Apply Leverage
+                    # Apply Leverage (CRITICAL FIX: PRINT ERRORS)
                     if leverage_memory.get(coin) != target_lev:
                         try: 
+                            print(f">> DEBUG: Switching {coin} to {target_lev}x...")
                             hands.set_leverage_all([coin], leverage=int(target_lev))
                             leverage_memory[coin] = int(target_lev)
-                        except: pass
+                        except Exception as e:
+                            # CRITICAL: If this fails, we will now know why.
+                            print(f"xx LEVERAGE ERROR for {coin}: {e}")
 
                     # Check Orders
                     pending = next((o for o in open_orders if o.get('coin') == coin), None)
