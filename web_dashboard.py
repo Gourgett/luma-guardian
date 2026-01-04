@@ -1,11 +1,10 @@
 from flask import Flask, render_template_string, jsonify
 import json
 import os
-import re
 
 app = Flask(__name__)
 
-# --- PAGE 1: COMMAND CENTER ---
+# --- LAYOUT CONFIGURATION ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -20,7 +19,6 @@ HTML_TEMPLATE = """
         table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
         th, td { text-align: left; padding: 8px; border-bottom: 1px solid #21262d; font-size: 0.9em; }
         .btn { background: #238636; color: white; padding: 5px 10px; text-decoration: none; border-radius: 4px; font-size: 0.8em; }
-        .btn:hover { background: #2ea043; }
         .ticker { font-size: 0.9em; color: #8b949e; border: 1px dashed #30363d; padding: 8px; background-color: #0d1117; min-height: 120px; max-height: 150px; overflow-y: auto; }
         a { color: inherit; text-decoration: none; border-bottom: 1px dotted #8b949e; }
         .blink { animation: blinker 1.5s linear infinite; color: #58a6ff; }
@@ -33,7 +31,8 @@ HTML_TEMPLATE = """
             <span>🦅 LUMA GUARDIAN [V3.3 LIVE]</span>
             <a href="/history" target="_blank" class="btn">📜 PERFORMANCE VAULT</a>
         </div>
-        <div id="top-status" style="font-size: 0.9em; margin-bottom: 10px; color: #8b949e;">CONNECTING...</div>
+        
+        <div id="top-status" style="font-size: 0.9em; margin-bottom: 10px; color: #8b949e;">LOADING DATA...</div>
         
         <div style="margin-top: 10px; display: flex; justify-content: space-between;">
             <div>EQUITY: <span id="equity" class="green">---</span></div>
@@ -43,10 +42,6 @@ HTML_TEMPLATE = """
         <div style="margin-top: 5px; display: flex; justify-content: space-between;">
             <div>PNL: <span id="pnl">---</span></div>
             <div>WIN RATE: <span id="winrate" class="gold">---</span></div>
-        </div>
-
-        <div style="margin-top: 5px; text-align: right; color: #8b949e; font-size: 0.9em;">
-            MODE: <span id="mode" style="color:#c9d1d9;">---</span>
         </div>
     </div>
 
@@ -63,35 +58,31 @@ HTML_TEMPLATE = """
 
     <div class="card">
         <div class="header">🤖 SYSTEM ACTIVITY (LIVE)</div>
-        <div style="margin-bottom: 10px;"> >> <span id="activity" class="cyan">Initializing...</span><span class="blink">_</span> </div>
-        <div id="ticker-log" class="ticker"> Waiting for updates... </div>
+        <div style="margin-bottom: 10px;"> <span id="activity" class="cyan">Initializing...</span><span class="blink">_</span> </div>
+        <div id="ticker-log" class="ticker"> Waiting for events... </div>
     </div>
 
     <script>
         function updateDashboard() {
             fetch('/data').then(r => r.json()).then(data => {
-                document.getElementById('top-status').innerText = data.status || "ONLINE";
+                // 1. TOP HEADER -> FINANCIAL MODE
+                document.getElementById('top-status').innerText = data.financial_header || "CALCULATING...";
+
+                // 2. FINANCIALS
                 document.getElementById('equity').innerText = "$" + data.equity;
                 document.getElementById('cash').innerText = "$" + data.cash;
-                
                 let pnl = parseFloat(data.pnl);
                 let pnlEl = document.getElementById('pnl');
                 pnlEl.innerText = (pnl > 0 ? "+" : "") + data.pnl;
                 pnlEl.className = pnl >= 0 ? "green" : "red";
-                
                 document.getElementById('winrate').innerText = data.win_rate || "0/0 (0%)";
-                document.getElementById('mode').innerText = data.mode;
 
-                let statusText = data.status || "Idle";
-                if (statusText.includes("Scanning")) {
-                    document.getElementById('activity').innerText = statusText;
-                } else {
-                    document.getElementById('activity').innerText = "Processing: " + statusText;
-                }
+                // 3. ACTIVITY HEADER -> LIVE ACTION
+                document.getElementById('activity').innerText = data.activity_header || ">> Scanning Markets...";
 
+                // 4. POSITIONS
                 let tbody = document.querySelector("#pos-table tbody");
                 tbody.innerHTML = "";
-                
                 if (data.positions && data.positions !== "NO_TRADES") {
                     let rows = data.positions.split("::");
                     rows.forEach(row => {
@@ -109,12 +100,13 @@ HTML_TEMPLATE = """
 
                 if (data.risk_report) document.getElementById('risk-report').innerText = data.risk_report.replace(/::/g, " | ");
 
+                // 5. TICKER LOGS
                 if (data.events) {
                     let allLogs = data.events.split("||").reverse();
                     let tickerDiv = document.getElementById('ticker-log');
-                    tickerDiv.innerHTML = allLogs.slice(0, 8).join("<br>");
+                    tickerDiv.innerHTML = allLogs.slice(0, 10).join("<br>");
                 }
-            }).catch(err => { document.getElementById('top-status').innerText = "VISUAL CONNECTION LOST"; });
+            }).catch(err => { console.log("Connection Lost"); });
         }
         updateDashboard();
         setInterval(updateDashboard, 2000);
@@ -148,7 +140,6 @@ HISTORY_TEMPLATE = """
 </html>
 """
 
-# --- DIRECT PATHING (REMOVED CONFIG DEPENDENCY) ---
 DATA_DIR = "/app/data"
 if not os.path.exists(DATA_DIR): DATA_DIR = "."
 
@@ -182,7 +173,7 @@ def data():
         with open(dash_path, "r") as f:
             return jsonify(json.load(f))
     except:
-        return jsonify({"status": "LOADING...", "equity": "0.00", "cash": "0.00", "pnl": "0.00"})
+        return jsonify({"financial_header": "LOADING...", "activity_header": "Waiting...", "equity": "0.00", "cash": "0.00", "pnl": "0.00"})
 
 @app.route('/health')
 def health():
