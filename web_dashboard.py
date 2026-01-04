@@ -2,17 +2,18 @@ from flask import Flask, render_template_string, jsonify
 import json
 import os
 import re
+# IMPORT YOUR CONFIG
+from config import conf 
 
 app = Flask(__name__)
 
-# --- PAGE 1: COMMAND CENTER (With Leverage Column) ---
+# --- PAGE 1: COMMAND CENTER ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
     <title>LUMA COMMAND</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta http-equiv="refresh" content="2"> 
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: monospace; padding: 20px; }
         .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 15px; margin-bottom: 20px; }
@@ -22,9 +23,10 @@ HTML_TEMPLATE = """
         th, td { text-align: left; padding: 8px; border-bottom: 1px solid #21262d; font-size: 0.9em; }
         .btn { background: #238636; color: white; padding: 5px 10px; text-decoration: none; border-radius: 4px; font-size: 0.8em; }
         .btn:hover { background: #2ea043; }
-        
-        .ticker { font-size: 0.9em; color: #8b949e; border: 1px dashed #30363d; padding: 8px; background-color: #0d1117; min-height: 120px; }
+        .ticker { font-size: 0.9em; color: #8b949e; border: 1px dashed #30363d; padding: 8px; background-color: #0d1117; min-height: 120px; max-height: 150px; overflow-y: auto; }
         a { color: inherit; text-decoration: none; border-bottom: 1px dotted #8b949e; }
+        .blink { animation: blinker 1.5s linear infinite; color: #58a6ff; }
+        @keyframes blinker { 50% { opacity: 0; } }
     </style>
 </head>
 <body>
@@ -33,7 +35,7 @@ HTML_TEMPLATE = """
             <span>🦅 LUMA GUARDIAN [V3.3 LIVE]</span>
             <a href="/history" target="_blank" class="btn">📜 PERFORMANCE VAULT</a>
         </div>
-        <div id="status" style="font-size: 0.9em; margin-bottom: 10px;">CONNECTING...</div>
+        <div id="top-status" style="font-size: 0.9em; margin-bottom: 10px; color: #8b949e;">CONNECTING...</div>
         
         <div style="margin-top: 10px; display: flex; justify-content: space-between;">
             <div>EQUITY: <span id="equity" class="green">---</span></div>
@@ -46,7 +48,7 @@ HTML_TEMPLATE = """
         </div>
 
         <div style="margin-top: 5px; text-align: right; color: #8b949e; font-size: 0.9em;">
-            MODE: <span id="mode" style="color:#c9d1d9;">---</span> | SESSION: <span id="session">---</span>
+            MODE: <span id="mode" style="color:#c9d1d9;">---</span>
         </div>
     </div>
 
@@ -54,7 +56,7 @@ HTML_TEMPLATE = """
         <div class="header">⚡ ACTIVE POSITIONS</div>
         <table id="pos-table">
             <thead>
-                <tr> <th>COIN</th> <th>SIDE</th> <th>LEV</th> <th>PNL</th> <th>ROE</th> <th>CONF%</th> </tr>
+                <tr> <th>COIN</th> <th>SIDE</th> <th>PNL</th> <th>ROE</th> <th>CONF</th> </tr>
             </thead>
             <tbody></tbody>
         </table>
@@ -63,14 +65,14 @@ HTML_TEMPLATE = """
 
     <div class="card">
         <div class="header">🤖 SYSTEM ACTIVITY (LIVE)</div>
-        <div style="margin-bottom: 10px;"> >> <span id="activity" class="cyan">Initializing...</span> </div>
+        <div style="margin-bottom: 10px;"> >> <span id="activity" class="cyan">Initializing...</span><span class="blink">_</span> </div>
         <div id="ticker-log" class="ticker"> Waiting for updates... </div>
     </div>
 
     <script>
         function updateDashboard() {
             fetch('/data').then(r => r.json()).then(data => {
-                document.getElementById('status').innerText = data.status || "ONLINE";
+                document.getElementById('top-status').innerText = data.status || "ONLINE";
                 document.getElementById('equity').innerText = "$" + data.equity;
                 document.getElementById('cash').innerText = "$" + data.cash;
                 
@@ -81,8 +83,13 @@ HTML_TEMPLATE = """
                 
                 document.getElementById('winrate').innerText = data.win_rate || "0/0 (0%)";
                 document.getElementById('mode').innerText = data.mode;
-                document.getElementById('session').innerText = data.session || "WAITING";
-                document.getElementById('activity').innerText = data.live_activity || "Idle";
+
+                let statusText = data.status || "Idle";
+                if (statusText.includes("Scanning")) {
+                    document.getElementById('activity').innerText = statusText;
+                } else {
+                    document.getElementById('activity').innerText = "Processing: " + statusText;
+                }
 
                 let tbody = document.querySelector("#pos-table tbody");
                 tbody.innerHTML = "";
@@ -96,23 +103,20 @@ HTML_TEMPLATE = """
                             let color = parseFloat(parts[2]) >= 0 ? "green" : "red";
                             let icon = parts[4] || ""; 
                             let link = `<a href="https://app.hyperliquid.xyz/trade/${parts[0]}" target="_blank">${icon} ${parts[0]}</a>`;
-                            let score = parts[6] || "---"; 
-                            let lev = parts[7] || "---"; // Catch the new Leverage item
-                            
-                            tr.innerHTML = `<td>${link}</td><td>${parts[1]}</td><td style='color:#8b949e'>${lev}</td><td class="${color}">$${parts[2]}</td><td class="${color}">${parts[3]}%</td><td class="gold">${score}</td>`;
+                            tr.innerHTML = `<td>${link}</td><td>${parts[1]}</td><td class="${color}">$${parts[2]}</td><td class="${color}">${parts[3]}%</td><td class="gold">Active</td>`;
                             tbody.appendChild(tr);
                         }
                     });
-                } else { tbody.innerHTML = "<tr><td colspan='6' style='text-align:center; color:#555;'>NO ACTIVE TRADES</td></tr>"; }
+                } else { tbody.innerHTML = "<tr><td colspan='5' style='text-align:center; color:#555;'>NO ACTIVE TRADES</td></tr>"; }
 
                 if (data.risk_report) document.getElementById('risk-report').innerText = data.risk_report.replace(/::/g, " | ");
 
-                if (data.trade_history) {
-                    let allLogs = data.trade_history.split("||").reverse();
+                if (data.events) {
+                    let allLogs = data.events.split("||").reverse();
                     let tickerDiv = document.getElementById('ticker-log');
-                    tickerDiv.innerHTML = allLogs.slice(0, 6).join("<br>");
+                    tickerDiv.innerHTML = allLogs.slice(0, 8).join("<br>");
                 }
-            }).catch(err => { document.getElementById('status').innerText = "VISUAL CONNECTION LOST"; });
+            }).catch(err => { document.getElementById('top-status').innerText = "VISUAL CONNECTION LOST"; });
         }
         updateDashboard();
         setInterval(updateDashboard, 2000);
@@ -121,7 +125,7 @@ HTML_TEMPLATE = """
 </html>
 """
 
-# --- PAGE 2: THE VAULT (Smart PnL Coloring) ---
+# --- PAGE 2: THE VAULT ---
 HISTORY_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -141,14 +145,7 @@ HISTORY_TEMPLATE = """
         <h1>📜 CLOSED TRADES (RESULTS ONLY)</h1>
         <a href="/" class="btn">BACK TO COMMAND</a>
     </div>
-    
-    <div style="margin-bottom: 20px; color: #8b949e; font-size: 0.9em;">
-        Filtering for: PROFIT, LOSS, SECURED, STOP, CUT. (Open orders hidden).
-    </div>
-
-    <div id="content">
-        {{ content | safe }}
-    </div>
+    <div id="content">{{ content | safe }}</div>
 </body>
 </html>
 """
@@ -160,48 +157,32 @@ def index():
 @app.route('/history')
 def history():
     try:
-        archive_path = "/app/data/luma_archive.txt"
-        if os.path.exists(archive_path):
-            with open(archive_path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-            
+        # LOAD FROM CONFIG PATH
+        stats_path = conf.get_path("stats.json")
+        if os.path.exists(stats_path):
+            with open(stats_path, "r") as f:
+                data = json.load(f)
+            history_list = data.get("history", [])
             formatted = []
-            for line in reversed(lines):
-                u = line.upper()
-                
-                # --- STRICT FILTER ---
-                if any(x in u for x in ["PROFIT", "LOSS", "SECURED", "WIN", "LOSE", "STOP", "CUT"]):
-                    
-                    # --- SMART COLOR LOGIC ---
-                    color = "green" 
-                    try:
-                        match = re.search(r'\(([+-]?\d*\.?\d+)\s*\|', line)
-                        if match:
-                            pnl_str = match.group(1)
-                            if pnl_str.startswith('-'): color = "red"
-                        else:
-                            if any(x in u for x in ["LOSS", "LOSE", "CUT", "STOP"]): color = "red"
-                    except:
-                         if any(x in u for x in ["LOSS", "LOSE", "CUT", "STOP"]): color = "red"
-                    
-                    formatted.append(f"<div class='log-entry {color}'>{line.strip()}</div>")
-            
-            if not formatted:
-                return render_template_string(HISTORY_TEMPLATE, content="<div style='padding:20px; color:#8b949e;'>NO CLOSED TRADES FOUND YET.</div>")
-
+            for item in history_list:
+                pnl = float(item.get('pnl', 0))
+                color = "green" if pnl >= 0 else "red"
+                line = f"[{item.get('date')}] <b>{item.get('coin')}</b>: {item.get('reason')} <span style='float:right'>${pnl:+.2f}</span>"
+                formatted.append(f"<div class='log-entry {color}'>{line}</div>")
+            if not formatted: return render_template_string(HISTORY_TEMPLATE, content="<div style='padding:20px; color:#8b949e;'>NO CLOSED TRADES.</div>")
             return render_template_string(HISTORY_TEMPLATE, content="".join(formatted))
-        else:
-            return render_template_string(HISTORY_TEMPLATE, content="<div style='padding:20px; color:#8b949e;'>NO ARCHIVE DATA FOUND YET.</div>")
-    except Exception as e:
-        return f"ERROR LOADING ARCHIVE: {e}"
+        else: return render_template_string(HISTORY_TEMPLATE, content="<div style='padding:20px; color:#8b949e;'>NO VAULT DATA.</div>")
+    except Exception as e: return f"ERROR: {e}"
 
 @app.route('/data')
 def data():
     try:
-        with open("dashboard_state.json", "r") as f:
+        # LOAD FROM CONFIG PATH
+        dash_path = conf.get_path("dashboard_state.json")
+        with open(dash_path, "r") as f:
             return jsonify(json.load(f))
     except:
-        return jsonify({"status": "RESTORING VISUALS...", "equity": "0.00", "cash": "0.00", "pnl": "0.00"})
+        return jsonify({"status": "LOADING...", "equity": "0.00", "cash": "0.00", "pnl": "0.00"})
 
 @app.route('/health')
 def health():
