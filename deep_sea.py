@@ -2,7 +2,7 @@ import time
 
 class DeepSea:
     def __init__(self):
-        print(">> DEEP SEA: Ratchet System Loaded (Mode: AGGRESSIVE JUMP)")
+        print(">> DEEP SEA: Ratchet System Loaded (Mode: VOLATILITY SURVIVOR)")
         self.secured_coins = []
         self.peak_roe = {}
         self.trauma_record = {}
@@ -28,10 +28,9 @@ class DeepSea:
             entry = float(p['entry'])
 
             if coin not in fleet_config: continue
-
             rules = fleet_config[coin]
             leverage = float(rules['lev']) # Ensure float
-            
+
             # CALCULATE ROE
             margin = (abs(size) * entry) / leverage if leverage > 0 else 1
             if margin == 0: continue
@@ -41,28 +40,26 @@ class DeepSea:
             if coin not in self.peak_roe: self.peak_roe[coin] = roe
             else:
                 if roe > self.peak_roe[coin]: self.peak_roe[coin] = roe
-
+            
             peak = self.peak_roe[coin]
 
-            # --- AGGRESSIVE JUMP STRATEGY ---
+            # --- VOLATILITY SURVIVOR STRATEGY ---
 
-            # 1. HARD STOP LOSS (Updated to use Config -4%)
-            # We use the config value to ensure the new Safety Protocol (-0.04) is respected.
-            stop_loss_val = rules.get('stop_loss', 0.04)
+            # 1. HARD STOP LOSS (Widened to -8% for Wicks)
+            # Uses config value if present, otherwise defaults to 0.08 (Safe)
+            stop_loss_val = rules.get('stop_loss', 0.08)
             current_floor = -(stop_loss_val)
 
-            # 2. EARLY BREAKEVEN (Trigger at 1.0%)
-            # Logic: Lock 0.2% immediately to cover fees.
-            if peak >= 0.01:
-                current_floor = 0.002 
+            # 2. EARLY BREAKEVEN (Trigger at 1.5%)
+            # Logic: We wait for 1.5% pump before locking profit to avoid chop.
+            if peak >= 0.015:
+                current_floor = 0.002 # Lock small profit to cover fees
 
-            # 3. THE "JUMP" TRAIL (Trigger at 2.0%)
-            # Logic: If we hit 2%, we force the stop to 1.5%.
-            # We maintain this 1.5% floor until the "1% Gap" naturally catches up
-            # (which happens at 2.5% peak). Then we trail with the 1% gap.
-            if peak >= 0.02:
-                # Math: Choose the higher of (1.5%) OR (Peak - 1%)
-                current_floor = max(0.015, peak - 0.01)
+            # 3. THE "RUNNER" TRAIL (Trigger at 4.0%)
+            # Logic: Once we hit 4% profit, we trail by 2%. 
+            # This 2% gap allows the coin to wiggle without selling early.
+            if peak >= 0.04:
+                current_floor = peak - 0.02
 
             # CHECK EXIT
             if roe < current_floor:
@@ -74,7 +71,7 @@ class DeepSea:
 
                 # HARD SELL EXECUTION
                 hands.place_market_order(coin, "SELL" if size > 0 else "BUY", abs(size))
-                
+
                 # LOGGING
                 pnl_str = f"{pnl:+.2f}"
                 events.append(f"💰 {tag}: {coin} ({pnl_str} | {roe*100:.1f}%)")
@@ -85,8 +82,8 @@ class DeepSea:
             elif current_floor > 0 and coin not in self.secured_coins:
                 self.secured_coins.append(coin)
 
-            # Emergency Hard Stop (Sanity Check)
-            if roe < -0.40:
+            # Emergency Hard Stop (Sanity Check widened to -50%)
+            if roe < -0.50:
                 hands.place_market_order(coin, "SELL" if size > 0 else "BUY", abs(size))
                 self.trauma_record[coin] = time.time()
                 events.append(f"xx EMERGENCY CUT: {coin}")
