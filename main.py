@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 warnings.simplefilter("ignore")
 
 # ==============================================================================
-#   LUMA SINGULARITY [HYBRID: TERMUX LOGIC + DASHBOARD VAULT]
-#   Mode: VOLATILITY SURVIVOR (Final: Live Action Heartbeat)
+#   LUMA SINGULARITY [HYBRID: RAILWAY MASTER]
+#   Mode: VOLATILITY SURVIVOR (Live Heartbeat Edition)
 # ==============================================================================
 
 # --- DIRECT PATH CONFIGURATION ---
@@ -23,7 +23,7 @@ ANCHOR_FILE = os.path.join(DATA_DIR, "equity_anchor.json")
 STATS_FILE = os.path.join(DATA_DIR, "stats.json")
 BTC_TICKER = "BTC"
 
-# --- CONFIGURATION (VOLATILITY SURVIVOR: 8% STOP + 0.75 SIZE) ---
+# --- CONFIGURATION (VOLATILITY SURVIVOR) ---
 FLEET_CONFIG = {
     "WIF":    {"type": "MEME",   "lev": 5, "risk_mult": 0.75, "stop_loss": 0.08},
     "DOGE":   {"type": "MEME",   "lev": 5, "risk_mult": 0.75, "stop_loss": 0.08},
@@ -35,9 +35,17 @@ FLEET_CONFIG = {
 
 # --- HARDCODED ANCHOR: $412.00 ---
 STARTING_EQUITY = 412.0
-EVENT_QUEUE = deque(maxlen=10) 
+EVENT_QUEUE = deque(maxlen=15) # Increased history depth
 
-# --- STATS ENGINE ---
+# --- GLOBAL STATE FOR DASHBOARD ---
+# We keep these global so 'broadcast_activity' can access them easily
+DASH_STATE = {
+    "equity": 0.0, "cash": 0.0, "pnl": 0.0,
+    "positions": [], "secured": [], "risk_mode": "STANDARD",
+    "financial_mode": "Initializing...",
+    "current_activity": ">> Starting Up..."
+}
+
 def load_stats():
     try:
         if os.path.exists(STATS_FILE):
@@ -54,7 +62,6 @@ def load_stats():
         data["total_pnl"] = 0.0
         data["last_reset"] = today
         save_stats(data)
-
     return data
 
 def save_stats(stats):
@@ -89,9 +96,6 @@ def calculate_metric_only(coin, candles, session, regime):
     except: pass
     return min(max(int(score), 0), 100)
 
-def load_anchor(current_equity):
-    return STARTING_EQUITY
-
 def update_heartbeat(status="ALIVE"):
     try:
         temp_file = os.path.join(DATA_DIR, "heartbeat.tmp")
@@ -117,24 +121,21 @@ def normalize_positions(raw_positions):
         except: continue
     return clean_pos
 
-def update_dashboard(equity, cash, activity_status, positions, financial_mode="STANDARD", secured_list=[], new_event=None):
-    global STARTING_EQUITY, EVENT_QUEUE
+# --- CORE DASHBOARD UPDATER ---
+def sync_dashboard(new_log=None):
+    global DASH_STATE, EVENT_QUEUE, FLEET_CONFIG
     try:
-        pnl = equity - STARTING_EQUITY
+        # 1. Update Logs if needed
+        if new_log:
+            t = time.strftime("%H:%M:%S")
+            EVENT_QUEUE.append(f"[{t}] {new_log}")
 
-        if new_event:
-            EVENT_QUEUE.append(f"{new_event}")
-
-        events_str = "||".join(list(EVENT_QUEUE))
+        # 2. Build Position Strings
         pos_str = "NO_TRADES"
         risk_report = []
-        stats = load_stats()
-        total_trades = stats['wins'] + stats['losses']
-        win_rate = int((stats['wins'] / total_trades) * 100) if total_trades > 0 else 0
-
-        if positions:
+        if DASH_STATE["positions"]:
             pos_lines = []
-            for p in positions:
+            for p in DASH_STATE["positions"]:
                 coin = p['coin']
                 size = p['size']
                 entry = p['entry']
@@ -143,36 +144,53 @@ def update_dashboard(equity, cash, activity_status, positions, financial_mode="S
                 lev_display = FLEET_CONFIG.get(coin, {}).get('lev', 5)
                 margin = (abs(size) * entry) / lev_display if lev_display > 0 else 0
                 roe = (pnl_val / margin) * 100 if margin > 0 else 0.0
-                is_secured = coin in secured_list
+                is_secured = coin in DASH_STATE["secured"]
                 icon = "🔒" if is_secured else ""
+                
                 if side == "LONG": target = entry * (1 + (1/lev_display))
                 else: target = entry * (1 - (1/lev_display))
                 t_str = f"{target:.6f}" if target < 1.0 else f"{target:.2f}"
+                
                 pos_lines.append(f"{coin}|{side}|{pnl_val:.2f}|{roe:.1f}|{icon}|{t_str}")
-                status = "SECURED" if is_secured else "RISK ON"
+                
+                status_txt = "SECURED" if is_secured else "RISK ON"
                 close_at = entry if is_secured else "Stop Loss"
-                risk_report.append(f"{coin}|{side}|{margin:.2f}|{status}|{close_at}")
+                risk_report.append(f"{coin}|{side}|{margin:.2f}|{status_txt}|{close_at}")
             pos_str = "::".join(pos_lines)
 
         if not risk_report: risk_report.append("NO_TRADES")
-        
-        # MAPPING:
-        # status -> Activity Header (The Cyan Text)
-        # mode -> The Top Card Financial Mode
+
+        # 3. Load Win Rate
+        stats = load_stats()
+        total = stats['wins'] + stats['losses']
+        wr = int((stats['wins'] / total) * 100) if total > 0 else 0
+
+        # 4. Construct JSON Payload
         data = {
-            "equity": f"{equity:.2f}", "cash": f"{cash:.2f}", "pnl": f"{pnl:+.2f}",
-            "status": activity_status, 
-            "events": events_str, "positions": pos_str,
-            "risk_report": "::".join(risk_report), 
-            "mode": financial_mode, 
+            "equity": f"{DASH_STATE['equity']:.2f}",
+            "cash": f"{DASH_STATE['cash']:.2f}",
+            "pnl": f"{DASH_STATE['pnl']:+.2f}",
+            "status": DASH_STATE['current_activity'],   # Goes to Cyan Header
+            "mode": DASH_STATE['financial_mode'],       # Goes to Top Card
+            "events": "||".join(list(EVENT_QUEUE)),     # Goes to Ticker
+            "positions": pos_str,
+            "risk_report": "::".join(risk_report),
             "updated": time.time(),
-            "win_rate": f"{stats['wins']}/{total_trades} ({win_rate}%)"
+            "win_rate": f"{stats['wins']}/{total} ({wr}%)"
         }
-        
+
+        # 5. Atomic Save
         temp_dash = os.path.join(DATA_DIR, "dashboard_state.tmp")
         with open(temp_dash, "w") as f: json.dump(data, f, ensure_ascii=False)
         os.replace(temp_dash, os.path.join(DATA_DIR, "dashboard_state.json"))
-    except: pass
+    except Exception as e:
+        print(f"xx DASHBOARD SYNC ERROR: {e}")
+
+# --- HELPER TO UPDATE ACTIVITY TEXT INSTANTLY ---
+def broadcast_activity(text):
+    global DASH_STATE
+    DASH_STATE['current_activity'] = text
+    sync_dashboard() # Push update immediately
 
 try:
     print(">> [1/10] Loading Modules...")
@@ -196,7 +214,7 @@ except Exception as e:
     print(f"xx CRITICAL LOAD ERROR: {e}"); sys.exit()
 
 def main_loop():
-    global STARTING_EQUITY
+    global STARTING_EQUITY, DASH_STATE
     print("🦅 LUMA SINGULARITY [RESTORED: VOLATILITY SURVIVOR]")
     try:
         update_heartbeat("BOOTING")
@@ -209,6 +227,7 @@ def main_loop():
         if not address: return
 
         msg.send("info", "🦅 **LUMA ONLINE:** VOLATILITY SURVIVOR (RAILWAY) ACTIVE.")
+        
         last_history_check = 0
         cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}
         leverage_memory = {}
@@ -217,8 +236,8 @@ def main_loop():
         SCAN_INTERVAL = 10 
 
         while True:
-            # 1. Update Heartbeat (Console Only)
-            update_heartbeat("SCANNING")
+            # 1. Housekeeping
+            update_heartbeat("ALIVE")
             session_data = chronos.get_session()
 
             if time.time() - last_history_check > 14400:
@@ -228,6 +247,7 @@ def main_loop():
                     last_history_check = time.time()
                 except: pass
 
+            # 2. Fetch User State
             equity, cash, clean_positions, open_orders = 0.0, 0.0, [], []
             try:
                 user_state = vision.get_user_state(address)
@@ -238,6 +258,7 @@ def main_loop():
                     open_orders = user_state.get('openOrders', [])
             except: pass
 
+            # 3. Calculate Financials
             current_pnl = equity - STARTING_EQUITY 
             current_roe_pct = (current_pnl / STARTING_EQUITY) * 100
 
@@ -246,35 +267,42 @@ def main_loop():
                  msg.send("errors", "CRITICAL: HARD FLOOR BREACHED.")
                  time.sleep(3600); continue
 
-            # --- FINANCIAL MODE ---
+            # 4. Determine Mode
             risk_mode = "STANDARD"
             if current_roe_pct >= 5.0: risk_mode = "GOD_MODE"
             elif current_roe_pct < 0.0: risk_mode = "RECOVERY"
             
+            # 5. Update Global State (But don't sync yet)
+            DASH_STATE["equity"] = equity
+            DASH_STATE["cash"] = cash
+            DASH_STATE["pnl"] = current_pnl
+            DASH_STATE["positions"] = clean_positions
+            DASH_STATE["secured"] = ratchet.secured_coins
+            
+            # Calculate Cap for Display
             base_margin_usd = equity * 0.11
             max_margin_usd  = equity * 0.165
             if risk_mode == "RECOVERY":
                 base_margin_usd *= 0.5
                 max_margin_usd *= 0.5
-
-            secured = ratchet.secured_coins
             
-            # --- DASHBOARD DEFAULTS ---
-            # Financials for Top Card
-            financial_mode = f"{risk_mode} (ROE:{current_roe_pct:.2f}%) Cap:${max_margin_usd:.0f}"
-            # Default Action Status (Will be overwritten if active)
-            activity_status = ">> Scanning Markets..."
+            DASH_STATE["financial_mode"] = f"{risk_mode} (ROE:{current_roe_pct:.2f}%) Cap:${max_margin_usd:.0f}"
             
-            update_dashboard(equity, cash, activity_status, clean_positions, financial_mode, secured)
+            # Default Activity (Will be overwritten by events below)
+            if time.time() - last_scan_time > SCAN_INTERVAL:
+                broadcast_activity(f">> Scanning Markets... ({risk_mode})")
 
             active_coins = [p['coin'] for p in clean_positions]
 
+            # 6. SCANNING LOOP
             if time.time() - last_scan_time > SCAN_INTERVAL:
                 last_scan_time = time.time()
+                
                 for coin, rules in FLEET_CONFIG.items():
                     target_leverage = rules['lev']
                     if risk_mode == "GOD_MODE" and rules['type'] == "MEME": target_leverage = 10
 
+                    # A. Leverage Check
                     if coin not in active_coins:
                          if leverage_memory.get(coin) != target_leverage:
                              try: 
@@ -282,9 +310,11 @@ def main_loop():
                                  leverage_memory[coin] = int(target_leverage)
                              except: pass
 
+                    # B. Trauma Check
                     if ratchet.check_trauma(hands, coin): continue
                     if next((p for p in clean_positions if p['coin'] == coin), None): continue
 
+                    # C. Analyze Candle
                     try: candles = vision.get_candles(coin, "1h")
                     except: candles = []
                     if not candles: continue
@@ -294,17 +324,20 @@ def main_loop():
                     regime = cached_history_data.get('regime', 'NEUTRAL')
                     metric_score = calculate_metric_only(coin, candles, session_data['name'], regime)
 
+                    # D. Chase Orders (Broadcasting Action)
                     pending = next((o for o in open_orders if o.get('coin') == coin), None)
                     if pending:
                         try:
                             order_price = float(pending.get('limitPx') or 0)
                             if abs(current_price - order_price) / order_price > 0.005: 
+                                # Broadcast the sweep action
+                                broadcast_activity(f">> SWEEPING: {coin} order out of range...")
                                 hands.cancel_all_orders(coin)
-                                # LIVE ACTION UPDATE
-                                update_dashboard(equity, cash, f">> SWEEPING: Canceling {coin}...", clean_positions, financial_mode, secured, new_event=f"🧹 SWEEPING: Canceling old order for {coin}")
+                                sync_dashboard(new_log=f"🧹 SWEEPING: Cancel old {coin}")
                         except: pass
                         continue
 
+                    # E. Signals
                     proposal = None
                     trend_status = predator.analyze_divergence(candles, coin)
                     season_info = season.get_multiplier(rules['type'])
@@ -332,16 +365,18 @@ def main_loop():
                         if oracle.consult(coin, proposal['source'], proposal['price'], context_str):
                             score_memory[coin] = metric_score
                             
-                            # LIVE ACTION UPDATE
-                            action_msg = f">> SETTING TRAP: {coin}..."
-                            log_msg = f">> SETTING TRAP: {proposal['side']} {coin} @ ${proposal['price']:.5f} (Size: {final_size})"
-                            update_dashboard(equity, cash, action_msg, clean_positions, financial_mode, secured, new_event=log_msg)
+                            # BROADCAST TRAP
+                            broadcast_activity(f">> TRAP: Setting {coin} Buy...")
+                            log_msg = f"🪤 TRAP: {coin} @ ${proposal['price']:.4f} (Size:{final_size})"
+                            sync_dashboard(new_log=log_msg)
                             
                             if hands.place_trap(coin, proposal['side'], proposal['price'], final_size):
                                 msg.notify_trade(coin, proposal['source'], proposal['price'], final_size)
 
+            # 7. Ratchet Management (With Logging)
             ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
             if ratchet_events:
+                broadcast_activity(">> MANAGING: Securing Profits...")
                 for event in ratchet_events:
                      try:
                          parts = event.split(":") 
@@ -362,12 +397,12 @@ def main_loop():
                              update_stats(pnl_val, coin_name, clean_event)
                          except: pass
                      
-                     # LIVE ACTION UPDATE (For Position Mgmt)
-                     update_dashboard(equity, cash, ">> MANAGING POSITIONS...", clean_positions, financial_mode, secured, new_event=event)
+                     sync_dashboard(new_log=event)
             
-            # Reset Activity Status after loop
-            update_dashboard(equity, cash, ">> Scanning Markets...", clean_positions, financial_mode, secured)
+            # Sync one last time to ensure current price/pnl is fresh
+            sync_dashboard()
             time.sleep(3)
+
     except Exception as e:
         print(f"xx CRITICAL: {e}")
         msg.send("errors", f"CRASH: {e}")
