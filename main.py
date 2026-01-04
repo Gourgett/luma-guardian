@@ -6,10 +6,10 @@ warnings.simplefilter("ignore")
 
 # ==============================================================================
 #   LUMA SINGULARITY [HYBRID: TERMUX LOGIC + DASHBOARD VAULT]
-#   Mode: VOLATILITY SURVIVOR (Railway Revert)
+#   Mode: VOLATILITY SURVIVOR (Railway Final: Recovery + Daily Reset)
 # ==============================================================================
 
-# --- DIRECT PATH CONFIGURATION (NO EXTERNAL FILE) ---
+# --- DIRECT PATH CONFIGURATION ---
 DATA_DIR = "/app/data"
 if not os.path.exists(DATA_DIR):
     try:
@@ -34,14 +34,33 @@ FLEET_CONFIG = {
 }
 
 STARTING_EQUITY = 0.0
-EVENT_QUEUE = deque(maxlen=10)
+EVENT_QUEUE = deque(maxlen=10) # Keeps last 10 events for the scrolling ticker
 
+# --- STATS ENGINE (With Daily Reset) ---
 def load_stats():
+    # 1. Load Data
     try:
         if os.path.exists(STATS_FILE):
-            with open(STATS_FILE, 'r') as f: return json.load(f)
-        return {"wins": 0, "losses": 0, "total_pnl": 0.0, "history": []}
-    except: return {"wins": 0, "losses": 0, "total_pnl": 0.0, "history": []}
+            with open(STATS_FILE, 'r') as f: 
+                data = json.load(f)
+        else:
+            data = {"last_reset": time.strftime("%Y-%m-%d"), "wins": 0, "losses": 0, "total_pnl": 0.0, "history": []}
+    except:
+        data = {"last_reset": time.strftime("%Y-%m-%d"), "wins": 0, "losses": 0, "total_pnl": 0.0, "history": []}
+
+    # 2. Daily Reset Check
+    today = time.strftime("%Y-%m-%d")
+    last_reset = data.get("last_reset", "")
+    
+    if last_reset != today:
+        # It's a new day! Reset counters but keep history log
+        data["wins"] = 0
+        data["losses"] = 0
+        data["total_pnl"] = 0.0
+        data["last_reset"] = today
+        save_stats(data) # Save the reset immediately
+
+    return data
 
 def save_stats(stats):
     try:
@@ -125,7 +144,7 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
         events_str = "||".join(list(EVENT_QUEUE))
         pos_str = "NO_TRADES"
         risk_report = []
-        stats = load_stats()
+        stats = load_stats() # This triggers the daily reset check if needed
         total_trades = stats['wins'] + stats['losses']
         win_rate = int((stats['wins'] / total_trades) * 100) if total_trades > 0 else 0
 
@@ -237,11 +256,19 @@ def main_loop():
                  msg.send("errors", "CRITICAL: HARD FLOOR BREACHED.")
                  time.sleep(3600); continue
 
+            # --- MODE SELECTION (RESTORED RECOVERY LOGIC) ---
             risk_mode = "STANDARD"
             if current_roe_pct >= 5.0: risk_mode = "GOD_MODE"
+            elif current_roe_pct <= -5.0: risk_mode = "RECOVERY" 
             
             base_margin_usd = equity * 0.11
             max_margin_usd  = equity * 0.165
+            
+            # Reduce size in Recovery Mode
+            if risk_mode == "RECOVERY":
+                base_margin_usd *= 0.5
+                max_margin_usd *= 0.5
+
             secured = ratchet.secured_coins
             status_msg = f">> Scanning Markets... ({risk_mode})"
             update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured)
