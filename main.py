@@ -6,6 +6,7 @@ warnings.simplefilter("ignore")
 
 # ==============================================================================
 #   LUMA SINGULARITY [HYBRID: TERMUX LOGIC + DASHBOARD VAULT]
+#   Mode: VOLATILITY SURVIVOR (Railway Edition + Confidence Logger)
 # ==============================================================================
 
 # --- PATH CONFIGURATION ---
@@ -22,14 +23,14 @@ ANCHOR_FILE = os.path.join(DATA_DIR, "equity_anchor.json")
 STATS_FILE = os.path.join(DATA_DIR, "stats.json")  # RESTORED: Performance Vault
 BTC_TICKER = "BTC"
 
-# --- CONFIGURATION (TERMUX FLEET + 4% HARD STOP) ---
+# --- CONFIGURATION (VOLATILITY SURVIVOR: 8% STOP + 0.75 SIZE) ---
 FLEET_CONFIG = {
-    "WIF":    {"type": "MEME",   "lev": 5, "risk_mult": 1.0, "stop_loss": 0.04},
-    "DOGE":   {"type": "MEME",   "lev": 5, "risk_mult": 1.0, "stop_loss": 0.04},
-    "PENGU":  {"type": "MEME",   "lev": 5, "risk_mult": 1.0, "stop_loss": 0.04},
-    "POPCAT": {"type": "MEME",   "lev": 5, "risk_mult": 1.0, "stop_loss": 0.04},
-    "BRETT":  {"type": "MEME",   "lev": 5, "risk_mult": 1.0, "stop_loss": 0.04},
-    "SPX":    {"type": "MEME",   "lev": 5, "risk_mult": 1.0, "stop_loss": 0.04}
+    "WIF":    {"type": "MEME",   "lev": 5, "risk_mult": 0.75, "stop_loss": 0.08},
+    "DOGE":   {"type": "MEME",   "lev": 5, "risk_mult": 0.75, "stop_loss": 0.08},
+    "PENGU":  {"type": "MEME",   "lev": 5, "risk_mult": 0.75, "stop_loss": 0.08},
+    "POPCAT": {"type": "MEME",   "lev": 5, "risk_mult": 0.75, "stop_loss": 0.08},
+    "BRETT":  {"type": "MEME",   "lev": 5, "risk_mult": 0.75, "stop_loss": 0.08},
+    "SPX":    {"type": "MEME",   "lev": 5, "risk_mult": 0.75, "stop_loss": 0.08}
 }
 
 STARTING_EQUITY = 0.0
@@ -52,24 +53,26 @@ def save_stats(stats):
     except: pass
 
 def update_stats(pnl, coin, reason):
-    # Called when a trade closes
+    # Called when a trade closes to populate Performance Tab
     stats = load_stats()
     if pnl > 0: stats["wins"] += 1
     else: stats["losses"] += 1
-    
+
     stats["total_pnl"] += pnl
-    # Keep last 50 trades for the Vault UI
+    
+    # Add to History List (The "Transactions" View)
     stats["history"].insert(0, {
         "date": time.strftime("%Y-%m-%d %H:%M"),
         "coin": coin,
         "pnl": pnl,
-        "reason": reason
+        "reason": reason # This will now include the confidence score
     })
-    stats["history"] = stats["history"][:50]
+    # Keep last 100 trades
+    stats["history"] = stats["history"][:100]
     save_stats(stats)
     return stats
 
-# --- SCORE HELPER (PASSIVE METRIC ONLY) ---
+# --- SCORE HELPER (DISPLAY ONLY - DOES NOT TRADE) ---
 def calculate_metric_only(coin, candles, session, regime):
     score = 50.0 
     try:
@@ -118,7 +121,7 @@ def normalize_positions(raw_positions):
             entry = float(p.get('entryPx') or p.get('entry_price') or 0)
             pnl = float(p.get('unrealizedPnl') or 0)
             if abs(size) < 0.0001: continue
-            
+
             raw_lev = p.get('leverage', {})
             actual_leverage = raw_lev.get('value', 1) 
 
@@ -139,16 +142,16 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
         if new_event:
             t = time.strftime("%H:%M:%S")
             EVENT_QUEUE.append(f"[{t}] {new_event}")
-        
+
         events_str = "||".join(list(EVENT_QUEUE))
         pos_str = "NO_TRADES"
         risk_report = []
 
-        # RESTORED: Calculate Win Rate for UI
+        # Load Stats for UI
         stats = load_stats()
         total_trades = stats['wins'] + stats['losses']
         win_rate = int((stats['wins'] / total_trades) * 100) if total_trades > 0 else 0
-        
+
         if positions:
             pos_lines = []
             for p in positions:
@@ -157,20 +160,20 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
                 entry = p['entry']
                 pnl_val = p['pnl']
                 side = "LONG" if size > 0 else "SHORT"
-                
-                lev_display = p.get('leverage', FLEET_CONFIG.get(coin, {}).get('lev', 5))
+
+                lev_display = FLEET_CONFIG.get(coin, {}).get('lev', 5)
                 margin = (abs(size) * entry) / lev_display if lev_display > 0 else 0
                 roe = (pnl_val / margin) * 100 if margin > 0 else 0.0
-                
+
                 is_secured = coin in secured_list
                 icon = "🔒" if is_secured else ""
-                
+
                 if side == "LONG": target = entry * (1 + (1/lev_display))
                 else: target = entry * (1 - (1/lev_display))
                 t_str = f"{target:.6f}" if target < 1.0 else f"{target:.2f}"
 
                 pos_lines.append(f"{coin}|{side}|{pnl_val:.2f}|{roe:.1f}|{icon}|{t_str}")
-                
+
                 status = "SECURED" if is_secured else "RISK ON"
                 close_at = entry if is_secured else "Stop Loss"
                 risk_report.append(f"{coin}|{side}|{margin:.2f}|{status}|{close_at}")
@@ -213,10 +216,10 @@ except Exception as e:
 
 def main_loop():
     global STARTING_EQUITY
-    print("🦅 LUMA SINGULARITY [RESTORED: TERMUX LOGIC + VAULT]")
+    print("🦅 LUMA SINGULARITY [RESTORED: VOLATILITY SURVIVOR]")
     try:
         update_heartbeat("BOOTING")
-        
+
         address = os.environ.get("WALLET_ADDRESS")
         if not address:
             try:
@@ -225,11 +228,12 @@ def main_loop():
             except: pass
         if not address: return
 
-        msg.send("info", "🦅 **LUMA ONLINE:** TERMUX LOGIC + VAULT RESTORED.")
+        msg.send("info", "🦅 **LUMA ONLINE:** VOLATILITY SURVIVOR (RAILWAY) ACTIVE.")
         last_history_check = 0
         cached_history_data = {'regime': 'NEUTRAL', 'multiplier': 1.0}
         leverage_memory = {}
-        
+        score_memory = {} # MEMORY FOR CONFIDENCE SCORES
+
         last_scan_time = 0
         SCAN_INTERVAL = 10 
 
@@ -237,7 +241,7 @@ def main_loop():
             # RESTORED: Explicit 'Scanning' Status
             update_heartbeat("SCANNING")
             session_data = chronos.get_session()
-            
+
             # --- 1. HISTORY CHECK (4 Hour) ---
             if time.time() - last_history_check > 14400:
                 try:
@@ -245,7 +249,7 @@ def main_loop():
                     if btc_daily: cached_history_data = history.check_regime(btc_daily)
                     last_history_check = time.time()
                 except: pass
-            
+
             # --- 2. GET USER STATE ---
             equity, cash, clean_positions, open_orders = 0.0, 0.0, [], []
             try:
@@ -268,18 +272,12 @@ def main_loop():
                  msg.send("errors", "CRITICAL: HARD FLOOR BREACHED.")
                  time.sleep(3600); continue
 
-            # --- 4. STATE MACHINE (RESTORED RECOVERY MODE) ---
+            # --- 4. STATE MACHINE ---
             risk_mode = "STANDARD"
             if current_roe_pct >= 5.0: risk_mode = "GOD_MODE"
-            elif current_roe_pct <= -5.0: risk_mode = "RECOVERY" # RESTORED
             
             base_margin_usd = equity * 0.11
             max_margin_usd  = equity * 0.165
-            
-            # If Recovery, cut sizing in half
-            if risk_mode == "RECOVERY":
-                base_margin_usd *= 0.5
-                max_margin_usd *= 0.5
 
             secured = ratchet.secured_coins
 
@@ -288,30 +286,30 @@ def main_loop():
 
             # --- 5. EXECUTION LOOP ---
             active_coins = [p['coin'] for p in clean_positions]
-            
+
             if time.time() - last_scan_time > SCAN_INTERVAL:
                 last_scan_time = time.time()
-                
+
                 for coin, rules in FLEET_CONFIG.items():
                     target_leverage = rules['lev']
                     if risk_mode == "GOD_MODE" and rules['type'] == "MEME": target_leverage = 10
-                    
+
                     if coin not in active_coins:
                          if leverage_memory.get(coin) != target_leverage:
                              try: 
                                  hands.set_leverage_all([coin], leverage=int(target_leverage))
                                  leverage_memory[coin] = int(target_leverage)
                              except: pass
-                    
+
                     if ratchet.check_trauma(hands, coin): continue
                     if next((p for p in clean_positions if p['coin'] == coin), None): continue
-                    
+
                     try: candles = vision.get_candles(coin, "1h")
                     except: candles = []
                     if not candles: continue
                     current_price = float(candles[-1].get('close') or 0)
                     if current_price == 0: continue
-                    
+
                     regime = cached_history_data.get('regime', 'NEUTRAL')
                     metric_score = calculate_metric_only(coin, candles, session_data['name'], regime)
 
@@ -326,14 +324,15 @@ def main_loop():
 
                     proposal = None
                     trend_status = predator.analyze_divergence(candles, coin)
-                    
+
                     season_info = season.get_multiplier(rules['type'])
                     season_mult = season_info.get('mult', 1.0)
                     context_str = f"Session: {session_data.get('name')}, Season: {season_info.get('note')}"
-                    
+
                     whale_signal = whale.hunt_turtle(candles) or whale.hunt_ghosts(candles)
                     xeno_signal = xeno.hunt(coin, candles)
 
+                    # --- EXACT BLUEPRINT LOGIC (NO CONFIDENCE CHECK) ---
                     if xeno_signal == "ATTACK":
                         if rules['type'] == "OFF": continue
                         if trend_status == "REAL_PUMP" or trend_status is None:
@@ -344,31 +343,57 @@ def main_loop():
                              proposal = {"source": whale_signal['type'], "side": whale_signal['side'], "price": whale_signal['price'], "reason": "REVERSAL_CONFIRMED"}
 
                     if proposal:
-                        raw_margin = base_margin_usd * season_mult
+                        # FIX APPLIED: Use risk_mult from fleet config (0.75)
+                        raw_margin = base_margin_usd * season_mult * rules.get('risk_mult', 1.0)
                         final_margin_usd = min(raw_margin, max_margin_usd)
                         final_size = round(final_margin_usd * target_leverage, 2)
-                        if final_size < 10: final_size = 10 
                         
+                        if final_size < 10: final_size = 10 
+
                         if oracle.consult(coin, proposal['source'], proposal['price'], context_str):
+                            # INJECT: Save score to memory for later retrieval
+                            score_memory[coin] = metric_score
+                            
                             msg_txt = f"OPEN {coin} ({proposal['source']}) ${final_margin_usd:.0f} Lev:{target_leverage}x [Score:{metric_score}]"
                             if hands.place_trap(coin, proposal['side'], proposal['price'], final_size):
                                 msg.notify_trade(coin, proposal['source'], proposal['price'], final_size)
                                 update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, new_event=msg_txt)
 
-            # --- 7. RATCHET (Every Loop) ---
+            # --- 7. RATCHET (Every Loop + STATS PARSER) ---
             ratchet_events = ratchet.manage_positions(hands, clean_positions, FLEET_CONFIG)
             if ratchet_events:
                 for event in ratchet_events:
-                     # RESTORED: Capture PnL for Win Rate Stats
+                     # INJECT: Add Confidence Score to the Event String for Logging
+                     try:
+                         # Extract Coin Name to look up score
+                         parts = event.split(":") 
+                         if len(parts) > 1:
+                             coin_name = parts[1].strip().split("(")[0].strip() # "PROFIT SECURED: WIF (...)" -> "WIF"
+                             score = score_memory.get(coin_name, "N/A")
+                             
+                             # Append score to event string " | 60% conf"
+                             event = f"{event[:-1]} | {score}% conf)" 
+                     except: pass
+                     
+                     # PARSER UPGRADE: Extracts REAL Coin and REAL PnL for the Stats Tab
                      if "STOP LOSS" in event or "PROFIT" in event:
                          try:
-                             parts = event.split("|") # e.g. "💰 STOP LOSS: WIF (-10.50 | -5%)"
-                             # Simple string parse to detect win/loss for stats
-                             # This is basic but functional for now
-                             is_win = "PROFIT" in event
-                             update_stats(1 if is_win else -1, "Unknown", "Ratchet") 
-                         except: pass
-                         
+                             # Expected: "💰 PROFIT SECURED: WIF (+0.50 | 1.5% | 60% conf)"
+                             clean_event = event.replace("💰 ", "")
+                             parts = clean_event.split(":") 
+                             tag = parts[0].strip()
+                             
+                             data_part = parts[1].strip() 
+                             coin_name = data_part.split("(")[0].strip() 
+                             
+                             numbers = data_part.split("(")[1] # "+0.50 | 1.5% | 60% conf)"
+                             pnl_val = float(numbers.split("|")[0].strip()) 
+                             
+                             # Pass the FULL event string as 'tag' so the UI shows everything
+                             update_stats(pnl_val, coin_name, clean_event)
+                         except: 
+                             pass
+
                      update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured, new_event=event)
 
             time.sleep(3)
