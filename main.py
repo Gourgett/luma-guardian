@@ -1,18 +1,26 @@
 import time, json, sys, os, warnings
 from collections import deque
 from datetime import datetime, timezone
-# IMPORT YOUR CONFIG
-from config import conf
 
 warnings.simplefilter("ignore")
 
 # ==============================================================================
 #   LUMA SINGULARITY [HYBRID: TERMUX LOGIC + DASHBOARD VAULT]
-#   Mode: VOLATILITY SURVIVOR (Railway + Config Sync)
+#   Mode: VOLATILITY SURVIVOR (Railway Revert)
 # ==============================================================================
 
-STATS_FILE = conf.get_path("stats.json")
-ANCHOR_FILE = conf.get_path("equity_anchor.json")
+# --- DIRECT PATH CONFIGURATION (NO EXTERNAL FILE) ---
+DATA_DIR = "/app/data"
+if not os.path.exists(DATA_DIR):
+    try:
+        os.makedirs(DATA_DIR)
+        print(f">> Created persistent directory: {DATA_DIR}")
+    except Exception as e:
+        print(f"xx FAILED TO CREATE DATA DIR: {e}")
+
+CONFIG_FILE = "server_config.json"
+ANCHOR_FILE = os.path.join(DATA_DIR, "equity_anchor.json")
+STATS_FILE = os.path.join(DATA_DIR, "stats.json")
 BTC_TICKER = "BTC"
 
 # --- CONFIGURATION (VOLATILITY SURVIVOR: 8% STOP + 0.75 SIZE) ---
@@ -81,9 +89,9 @@ def load_anchor(current_equity):
 
 def update_heartbeat(status="ALIVE"):
     try:
-        temp_file = conf.get_path("heartbeat.tmp")
+        temp_file = os.path.join(DATA_DIR, "heartbeat.tmp")
         with open(temp_file, "w") as f: json.dump({"last_beat": time.time(), "status": status}, f)
-        os.replace(temp_file, conf.get_path("heartbeat.json"))
+        os.replace(temp_file, os.path.join(DATA_DIR, "heartbeat.json"))
     except: pass
 
 def normalize_positions(raw_positions):
@@ -151,10 +159,9 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
             "win_rate": f"{stats['wins']}/{total_trades} ({win_rate}%)"
         }
         
-        # SAVE TO CONFIG PATH
-        temp_dash = conf.get_path("dashboard_state.tmp")
+        temp_dash = os.path.join(DATA_DIR, "dashboard_state.tmp")
         with open(temp_dash, "w") as f: json.dump(data, f, ensure_ascii=False)
-        os.replace(temp_dash, conf.get_path("dashboard_state.json"))
+        os.replace(temp_dash, os.path.join(DATA_DIR, "dashboard_state.json"))
     except: pass
 
 try:
@@ -183,7 +190,13 @@ def main_loop():
     print("🦅 LUMA SINGULARITY [RESTORED: VOLATILITY SURVIVOR]")
     try:
         update_heartbeat("BOOTING")
-        if not conf.wallet_address: return
+        address = os.environ.get("WALLET_ADDRESS")
+        if not address:
+            try:
+                cfg = json.load(open(CONFIG_FILE))
+                address = cfg.get('wallet_address')
+            except: pass
+        if not address: return
 
         msg.send("info", "🦅 **LUMA ONLINE:** VOLATILITY SURVIVOR (RAILWAY) ACTIVE.")
         last_history_check = 0
@@ -206,7 +219,7 @@ def main_loop():
 
             equity, cash, clean_positions, open_orders = 0.0, 0.0, [], []
             try:
-                user_state = vision.get_user_state(conf.wallet_address)
+                user_state = vision.get_user_state(address)
                 if user_state:
                     equity = float(user_state.get('marginSummary', {}).get('accountValue', 0))
                     cash = float(user_state.get('withdrawable', 0))
