@@ -6,7 +6,7 @@ warnings.simplefilter("ignore")
 
 # ==============================================================================
 #   LUMA SINGULARITY [HYBRID: TERMUX LOGIC + DASHBOARD VAULT]
-#   Mode: VOLATILITY SURVIVOR (Railway Final: Recovery + Daily Reset)
+#   Mode: VOLATILITY SURVIVOR (Railway Final: Fixed Dashboard Header)
 # ==============================================================================
 
 # --- DIRECT PATH CONFIGURATION ---
@@ -33,12 +33,12 @@ FLEET_CONFIG = {
     "SPX":    {"type": "MEME",   "lev": 5, "risk_mult": 0.75, "stop_loss": 0.08}
 }
 
-STARTING_EQUITY = 0.0
-EVENT_QUEUE = deque(maxlen=10) # Keeps last 10 events for the scrolling ticker
+# --- FIX 1: HARDCODED ANCHOR TO 412.0 AS REQUESTED ---
+STARTING_EQUITY = 412.0
+EVENT_QUEUE = deque(maxlen=10)
 
 # --- STATS ENGINE (With Daily Reset) ---
 def load_stats():
-    # 1. Load Data
     try:
         if os.path.exists(STATS_FILE):
             with open(STATS_FILE, 'r') as f: 
@@ -48,17 +48,15 @@ def load_stats():
     except:
         data = {"last_reset": time.strftime("%Y-%m-%d"), "wins": 0, "losses": 0, "total_pnl": 0.0, "history": []}
 
-    # 2. Daily Reset Check
     today = time.strftime("%Y-%m-%d")
     last_reset = data.get("last_reset", "")
     
     if last_reset != today:
-        # It's a new day! Reset counters but keep history log
         data["wins"] = 0
         data["losses"] = 0
         data["total_pnl"] = 0.0
         data["last_reset"] = today
-        save_stats(data) # Save the reset immediately
+        save_stats(data)
 
     return data
 
@@ -95,16 +93,8 @@ def calculate_metric_only(coin, candles, session, regime):
     return min(max(int(score), 0), 100)
 
 def load_anchor(current_equity):
-    try:
-        if os.path.exists(ANCHOR_FILE):
-            with open(ANCHOR_FILE, 'r') as f:
-                data = json.load(f)
-                return float(data.get("start_equity", current_equity))
-        else:
-            with open(ANCHOR_FILE, 'w') as f:
-                json.dump({"start_equity": current_equity}, f)
-            return current_equity
-    except: return current_equity
+    # We ignore the file loading because user requested HARD 412 baseline.
+    return 412.0
 
 def update_heartbeat(status="ALIVE"):
     try:
@@ -134,8 +124,8 @@ def normalize_positions(raw_positions):
 def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", secured_list=[], new_event=None):
     global STARTING_EQUITY, EVENT_QUEUE
     try:
-        if STARTING_EQUITY == 0.0 and equity > 0: STARTING_EQUITY = load_anchor(equity)
-        pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
+        # Use Hardcoded 412.0
+        pnl = equity - STARTING_EQUITY
 
         if new_event:
             t = time.strftime("%H:%M:%S")
@@ -144,7 +134,7 @@ def update_dashboard(equity, cash, status_msg, positions, mode="AGGRESSIVE", sec
         events_str = "||".join(list(EVENT_QUEUE))
         pos_str = "NO_TRADES"
         risk_report = []
-        stats = load_stats() # This triggers the daily reset check if needed
+        stats = load_stats()
         total_trades = stats['wins'] + stats['losses']
         win_rate = int((stats['wins'] / total_trades) * 100) if total_trades > 0 else 0
 
@@ -246,17 +236,16 @@ def main_loop():
                     open_orders = user_state.get('openOrders', [])
             except: pass
 
-            if STARTING_EQUITY == 0.0 and equity > 0: STARTING_EQUITY = load_anchor(equity)
-            current_pnl = equity - STARTING_EQUITY if STARTING_EQUITY > 0 else 0.0
-            start_eq_safe = STARTING_EQUITY if STARTING_EQUITY > 0 else 1.0
-            current_roe_pct = (current_pnl / start_eq_safe) * 100
+            # --- FIX 2: FORCE CALCULATION AGAINST 412.0 ---
+            current_pnl = equity - STARTING_EQUITY # (Equity - 412)
+            current_roe_pct = (current_pnl / STARTING_EQUITY) * 100
 
             if 1.0 < equity < 10.0:
                  print("xx CRITICAL: EQUITY BELOW $10. HALTING TRADING.")
                  msg.send("errors", "CRITICAL: HARD FLOOR BREACHED.")
                  time.sleep(3600); continue
 
-            # --- MODE SELECTION (RESTORED RECOVERY LOGIC) ---
+            # --- MODE SELECTION ---
             risk_mode = "STANDARD"
             if current_roe_pct >= 5.0: risk_mode = "GOD_MODE"
             elif current_roe_pct <= -5.0: risk_mode = "RECOVERY" 
@@ -264,13 +253,16 @@ def main_loop():
             base_margin_usd = equity * 0.11
             max_margin_usd  = equity * 0.165
             
-            # Reduce size in Recovery Mode
             if risk_mode == "RECOVERY":
                 base_margin_usd *= 0.5
                 max_margin_usd *= 0.5
 
             secured = ratchet.secured_coins
-            status_msg = f">> Scanning Markets... ({risk_mode})"
+            
+            # --- FIX 3: RESTORE BLUEPRINT STATUS MESSAGE ---
+            # This ensures the dashboard header shows Mode and ROE vs 412, not "Scanning..."
+            status_msg = f"Mode:{risk_mode} (ROE:{current_roe_pct:.2f}%) Cap:${max_margin_usd:.0f}"
+            
             update_dashboard(equity, cash, status_msg, clean_positions, risk_mode, secured)
 
             active_coins = [p['coin'] for p in clean_positions]
