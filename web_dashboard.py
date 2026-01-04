@@ -2,8 +2,6 @@ from flask import Flask, render_template_string, jsonify
 import json
 import os
 import re
-# IMPORT YOUR CONFIG
-from config import conf 
 
 app = Flask(__name__)
 
@@ -150,6 +148,10 @@ HISTORY_TEMPLATE = """
 </html>
 """
 
+# --- DIRECT PATHING (REMOVED CONFIG DEPENDENCY) ---
+DATA_DIR = "/app/data"
+if not os.path.exists(DATA_DIR): DATA_DIR = "."
+
 @app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE)
@@ -157,8 +159,7 @@ def index():
 @app.route('/history')
 def history():
     try:
-        # LOAD FROM CONFIG PATH
-        stats_path = conf.get_path("stats.json")
+        stats_path = os.path.join(DATA_DIR, "stats.json")
         if os.path.exists(stats_path):
             with open(stats_path, "r") as f:
                 data = json.load(f)
@@ -177,8 +178,7 @@ def history():
 @app.route('/data')
 def data():
     try:
-        # LOAD FROM CONFIG PATH
-        dash_path = conf.get_path("dashboard_state.json")
+        dash_path = os.path.join(DATA_DIR, "dashboard_state.json")
         with open(dash_path, "r") as f:
             return jsonify(json.load(f))
     except:
