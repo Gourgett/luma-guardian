@@ -14,7 +14,7 @@ class Xenomorph:
             # 2. HYBRID RSI FILTER
             rsi = self._calculate_rsi(closes, 14)
             # UPDATE: Added kBONK/kFLOKI
-            meme_coins = ["WIF", "DOGE", "PENGU", "PEPE", "SHIB", "kBONK", "kFLOKI"]
+            meme_coins = ["WIF", "DOGE", "PENGU", "SHIB", "kBONK", "kFLOKI"]
 
             if coin in meme_coins: rsi_limit = 85
             else: rsi_limit = 75
