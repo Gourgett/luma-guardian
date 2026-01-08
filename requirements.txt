@@ -1,6 +1,7 @@
 eth-account
 requests
 hyperliquid-python-sdk
-flask
 google-generativeai
-gunicorn
+streamlit
+pandas
+watchdog
