@@ -5,12 +5,14 @@ import json
 import os
 
 class Hands:
-    def __init__(self, config):
+    def __init__(self, config=None):
         """
         The Execution Module (Hands).
-        Responsible for wallet connection, trade execution, and safety checks.
+        Updated to handle optional config to maintain compatibility with main.py calls.
         """
-        self.config = config
+        # FIX: Handle cases where config is not passed (main.py calls Hands() empty)
+        self.config = config if config else {}
+        
         self.w3 = None
         self.account = None
         self.wallet_address = None
@@ -22,27 +24,29 @@ class Hands:
     def _connect(self):
         try:
             # 1. Setup Web3 Provider
-            rpc_url = self.config.get('RPC_URL', 'http://127.0.0.1:8545')
+            # Look in config first, then environment variable, then default to localhost
+            rpc_url = self.config.get('RPC_URL', os.getenv('RPC_URL', 'http://127.0.0.1:8545'))
             self.w3 = Web3(Web3.HTTPProvider(rpc_url))
             
             if not self.w3.is_connected():
                 print(">> HANDS ERROR: Could not connect to RPC.")
-                return
-
+                # We do not return here to allow the bot to start in 'Offline Mode' if needed
+            
             # 2. Load Wallet
-            # Assumes private key is stored in env or config safely
-            private_key = os.getenv("PRIVATE_KEY")
+            # Look in config first, then environment variable
+            private_key = self.config.get('PRIVATE_KEY', os.getenv("PRIVATE_KEY"))
+            
             if not private_key:
                 print(">> HANDS ERROR: No Private Key found in environment.")
+                self.connected = False
                 return
             
             self.account = Account.from_key(private_key)
             
             # --- CRITICAL FIX [2026-01-10] ---
-            # Updated for newer Web3.py/eth_account versions.
-            # LocalAccount is an object, not a dictionary.
+            # Solves the 'LocalAccount object is not subscriptable' error
             self.wallet_address = self.account.address
-            self._private_key = self.account.key  # Internal reference only
+            self._private_key = self.account.key
             # ---------------------------------
 
             self.connected = True
@@ -64,14 +68,15 @@ class Hands:
         print(f">> HANDS: Executing {action} on {token_address} for ${amount_usd}...")
         
         # Placeholder for actual router interaction (Uniswap/Raydium etc.)
-        # This logic remains unchanged from your specific router implementation.
-        # Add your specific router contract calls here.
-        
         time.sleep(1) # Simulation of network latency
         return True
 
     def get_balance(self):
-        if self.connected:
-            balance_wei = self.w3.eth.get_balance(self.wallet_address)
-            return self.w3.from_wei(balance_wei, 'ether')
+        if self.connected and self.w3 and self.w3.is_connected():
+            try:
+                balance_wei = self.w3.eth.get_balance(self.wallet_address)
+                return self.w3.from_wei(balance_wei, 'ether')
+            except Exception as e:
+                print(f">> HANDS ERROR (Get Balance): {e}")
+                return 0.0
         return 0.0
