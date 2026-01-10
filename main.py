@@ -13,7 +13,6 @@ try:
     from deep_sea import DeepSea
     from xenomorph import Xenomorph
     from smart_money import SmartMoney
-    # from chronos import Chronos 
 except ImportError as e:
     print(f">> CRITICAL ERROR: Missing Module {e}")
     sys.exit(1)
@@ -35,10 +34,8 @@ DASHBOARD_FILE = os.path.join(DATA_DIR, "dashboard_state.json")
 STATS_FILE = os.path.join(DATA_DIR, "stats.json")
 
 # --- CORE CONFIGURATION ---
-BTC_TICKER = "BTC"
-# [CRITICAL] HARDCODED BASELINE. DO NOT CHANGE DYNAMICALLY.
+# [CRITICAL] HARDCODED BASELINE.
 STARTING_EQUITY = 412.0 
-MIN_EQUITY_THRESHOLD = 150.0
 
 FLEET_CONFIG = {
     "SOL":   {"type": "PRINCE", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.04},
@@ -93,16 +90,21 @@ def main():
     print(">> SYSTEM BOOT: LUMA SINGULARITY (RECOVERY PROTOCOL ENFORCED)")
     
     conf = load_config()
-    from hands import Hands
-    from messenger import Messenger
+    try:
+        from hands import Hands
+        from messenger import Messenger
+        hands = Hands(config=conf)
+        messenger = Messenger()
+    except Exception as e:
+        print(f">> WARNING: Hands Init Failed (Check Keys): {e}")
+        hands = None
+        messenger = None
 
-    hands = Hands(config=conf)
     vision = Vision()
     predator = Predator()
     deep_sea = DeepSea() # Handles stats.json internally
     xenomorph = Xenomorph()
     smart_money = SmartMoney()
-    messenger = Messenger()
 
     equity = STARTING_EQUITY
     cash = 0.0
@@ -113,7 +115,7 @@ def main():
     while True:
         try:
             # 1. UPDATE ACCOUNT
-            wallet_addr = conf["wallet_address"] if conf else hands.wallet_address
+            wallet_addr = conf["wallet_address"] if conf else (hands.wallet_address if hands else None)
             acct = vision.get_user_state(wallet_addr)
             
             if acct:
@@ -133,12 +135,10 @@ def main():
                             "pnl": float(pos.get("unrealizedPnl", 0))
                         })
 
-            # 2. DETERMINE MODE (STRICT LOGIC)
-            pnl_pct = ((equity - STARTING_EQUITY) / STARTING_EQUITY) * 100
-            
+            # 2. DETERMINE MODE
             if equity < STARTING_EQUITY:
                 mode = "RECOVERY"
-            elif pnl_pct > 12.0:
+            elif ((equity - STARTING_EQUITY) / STARTING_EQUITY) > 0.12:
                 mode = "GOD MODE"
             else:
                 mode = "STANDARD"
@@ -182,16 +182,26 @@ def main():
                         "quality": quality
                     })
                     
-                    # Signal Log
+                    # --- EXECUTION BLOCK (ARMED) ---
                     if "BUY" in str(quality) or "SELL" in str(quality) or "BREAKOUT" in str(quality):
                         EVENT_QUEUE.append(f"[{t}] ⚡ SIGNAL: {coin} | {quality}")
+                        
+                        trade_size_usd = 60.0 
+                        current_active = [p['coin'] for p in positions]
+                        
+                        if coin not in current_active:
+                            if hands:
+                                print(f">> 🔫 FIRING: {coin} (Size: ${trade_size_usd})")
+                                hands.place_market_order(coin, "BUY", trade_size_usd)
+                        else:
+                            print(f">> ⚠️ SKIPPING {coin}: Position Active.")
                     
                     time.sleep(0.5)
 
                 except Exception as e:
                     print(f"xx SCAN ERROR {coin}: {e}")
 
-            # 5. RISK MANAGEMENT
+            # 5. RISK MANAGEMENT (DEEP SEA)
             risk_logs = deep_sea.manage_positions(hands, positions, FLEET_CONFIG)
             if risk_logs:
                 for log in risk_logs: EVENT_QUEUE.append(f"[{t}] {log}")
