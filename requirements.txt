@@ -4,3 +4,4 @@ hyperliquid-python-sdk
 streamlit
 pandas
 watchdog
+web3
