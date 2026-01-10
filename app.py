@@ -17,7 +17,7 @@ def calculate_hard_sell(price):
     return float(price) * (1 - HARD_SELL_PERCENT)
 
 # ==========================================
-# 2. DATA LOADING
+# 2. DATA LOADING (PATCHED)
 # ==========================================
 DATA_DIR = "data"
 STATE_FILE = os.path.join(DATA_DIR, "dashboard_state.json")
@@ -27,11 +27,24 @@ STATS_FILE = os.path.join(DATA_DIR, "stats.json")
 if not os.path.exists(STATE_FILE): STATE_FILE = "dashboard_state.json"
 if not os.path.exists(STATS_FILE): STATS_FILE = "stats.json"
 
-def load_json(filepath):
+def load_json(filepath, retries=3):
+    """
+    STABILITY PATCH: Retries loading JSON to handle race conditions 
+    if the backend is writing to the file simultaneously.
+    """
     if not os.path.exists(filepath): return None
-    try:
-        with open(filepath, "r") as f: return json.load(f)
-    except: return None
+    
+    for _ in range(retries):
+        try:
+            with open(filepath, "r") as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            # File might be mid-write; wait briefly and retry
+            time.sleep(0.1)
+            continue
+        except Exception:
+            return None
+    return None
 
 def format_signal(signal):
     """
@@ -168,7 +181,7 @@ if data:
 
     st.divider()
 
-    # --- C. LIVE POSITIONS ---
+    # --- C. LIVE POSITIONS (PATCHED) ---
     st.subheader("⚡ Active Positions")
     positions = data.get('positions', [])
     secured_coins = data.get('secured_coins', [])
@@ -176,13 +189,17 @@ if data:
     if positions:
         pos_df = pd.DataFrame(positions)
         
-        # 1. ROE Calculation
-        # Approx Margin = (Entry * Size) / 5. Used for ROE calc.
-        pos_df['ROE'] = (pos_df['pnl'] / (pos_df['entry'] * pos_df['size'].abs() / 5)) * 100 
-        
-        # 2. Margin Calculation (The "How much I put in" Column)
+        # 1. Margin Calculation (The "How much I put in" Column)
         # Formula: (Entry Price * Size Coins) / Leverage (5x)
         pos_df['Margin'] = (pos_df['entry'] * pos_df['size'].abs()) / 5
+        
+        # 2. ROE Calculation (STABILITY PATCH)
+        # Prevents division by zero if margin or size is not yet populated
+        def safe_roe(row):
+            if row['Margin'] == 0: return 0.0
+            return (row['pnl'] / row['Margin']) * 100
+
+        pos_df['ROE'] = pos_df.apply(safe_roe, axis=1)
         
         # 3. Status Check
         pos_df['Status'] = pos_df['coin'].apply(
