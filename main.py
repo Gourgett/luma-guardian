@@ -15,7 +15,7 @@ try:
     from smart_money import SmartMoney
     from hands import Hands
     from messenger import Messenger
-    from seasonality import Seasonality # Optional if you have it file
+    # from seasonality import Seasonality 
 except ImportError as e:
     print(f">> CRITICAL ERROR: Missing Module {e}")
     sys.exit(1)
@@ -28,6 +28,7 @@ if not os.path.exists(DATA_DIR): os.makedirs(DATA_DIR, exist_ok=True)
 DASHBOARD_FILE = os.path.join(DATA_DIR, "dashboard_state.json")
 STARTING_EQUITY = 412.0 
 
+# Default Config (Baseline)
 FLEET_CONFIG = {
     "SOL":   {"type": "PRINCE", "lev": 5},
     "SUI":   {"type": "PRINCE", "lev": 5},
@@ -74,7 +75,6 @@ def main():
     deep_sea = DeepSea()
     xenomorph = Xenomorph()
     smart_money = SmartMoney()
-    # seasonality = Seasonality() # If used
 
     equity = STARTING_EQUITY
     cash = 0.0
@@ -86,27 +86,52 @@ def main():
             # 1. UPDATE ACCOUNT
             wallet = hands.wallet_address if hands else None
             acct = vision.get_user_state(wallet)
+            
             if acct:
                 equity = float(acct.get("marginSummary", {}).get("accountValue", equity))
                 cash = float(acct.get("withdrawable", 0.0))
                 raw_pos = acct.get("assetPositions", [])
+                
                 positions = []
                 for p in raw_pos:
                     pos = p.get("position", {})
                     sz = float(pos.get("szi", 0))
                     if sz != 0:
+                        # [FIX 1] Direct API Fetch for Margin (No Calculation)
+                        margin_used = float(pos.get("marginUsed", 0.0))
+                        
                         positions.append({
-                            "coin": pos.get("coin"), "size": sz,
+                            "coin": pos.get("coin"), 
+                            "size": sz,
                             "entry": float(pos.get("entryPx", 0)),
-                            "pnl": float(pos.get("unrealizedPnl", 0))
+                            "pnl": float(pos.get("unrealizedPnl", 0)),
+                            "margin": margin_used  # Stores real exchange value
                         })
 
-            # 2. DETERMINE MODE
-            if equity < STARTING_EQUITY: mode = "RECOVERY"
-            elif ((equity - STARTING_EQUITY)/STARTING_EQUITY) > 0.12: mode = "GOD MODE"
-            else: mode = "STANDARD"
+            # 2. DETERMINE MODE & ENFORCE LOGIC [FIX 2]
+            # Calculate metrics
+            current_roe = ((equity - STARTING_EQUITY) / STARTING_EQUITY) * 100
+            
+            if equity < STARTING_EQUITY: 
+                mode = "RECOVERY"
+            elif current_roe > 12.0 and equity > STARTING_EQUITY: 
+                mode = "GOD MODE"
+            else: 
+                mode = "STANDARD"
 
-            session = "LONDON/NY" # Simplified for brevity, put Chronos logic here if needed
+            # Enforce Leverage Cap based on Mode
+            # If NOT God Mode, Force 5x. If God Mode, Allow Prince 10x.
+            is_god_mode = (mode == "GOD MODE")
+            
+            for coin_name, cfg in FLEET_CONFIG.items():
+                if cfg['type'] == 'PRINCE':
+                    # Only upgrade to 10x if God Mode is explicitly active
+                    cfg['lev'] = 10 if is_god_mode else 5
+                else:
+                    # All others stay at 5x
+                    cfg['lev'] = 5
+
+            session = "LONDON/NY" 
 
             # 3. SCANNER
             scan_data = []
@@ -126,15 +151,14 @@ def main():
                     curr_price = float(candles[-1]['c'])
                     c_type = FLEET_CONFIG[coin]['type']
 
-                    # SMART MONEY ANALYSIS (Turtle + Prince Logic)
-                    # We pass 'c_type' so it knows if it should look for Prince Structure or Meme Hype
+                    # SMART MONEY ANALYSIS
                     sm_sig = smart_money.hunt_turtle(candles, coin_type=c_type)
                     
                     quality = "NEUTRAL"
                     if sm_sig:
-                        quality = sm_sig['type'] # e.g., "PRINCE_TREND_FOLLOW" or "MEME_BREAKOUT"
+                        quality = sm_sig['type'] 
 
-                    # Xenomorph Override (Pattern Breakouts)
+                    # Xenomorph Override
                     xeno_sig = xenomorph.hunt(coin, candles)
                     if xeno_sig == "ATTACK": quality = "⚔️ BREAKOUT"
 
@@ -159,6 +183,7 @@ def main():
                         if coin not in active_coins and alloc_size_usd > 5:
                             if hands:
                                 side = "BUY" if is_buy else "SELL"
+                                # Note: Leverage is determined by FLEET_CONFIG settings here
                                 print(f">> 🔫 FIRING {side}: {coin} (Size: ${alloc_size_usd})")
                                 hands.place_market_order(coin, side, alloc_size_usd)
                         else:
@@ -168,13 +193,15 @@ def main():
                 except Exception as e:
                     print(f"xx SCAN ERROR {coin}: {e}")
 
-            # 4. RISK MANAGEMENT (Pass Vision for Prices)
+            # 4. RISK MANAGEMENT
             risk_logs = deep_sea.manage_positions(hands, positions, FLEET_CONFIG, vision)
             if risk_logs:
                 for log in risk_logs: EVENT_QUEUE.append(f"[{t}] {log}")
 
             save_dashboard_state(mode, session, equity, cash, positions, scan_data, EVENT_QUEUE, deep_sea.secured_coins)
-            time.sleep(5)
+            
+            # [FIX 3] Reduced sleep to 3s
+            time.sleep(3)
 
         except Exception as e:
             print(f"xx MAIN ERROR: {e}")
