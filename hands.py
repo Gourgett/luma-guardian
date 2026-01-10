@@ -14,21 +14,38 @@ class Hands:
         self.private_key = private_key or os.environ.get("PRIVATE_KEY")
         self.wallet_address = wallet_address or os.environ.get("WALLET_ADDRESS")
         
-        if not self.private_key or not self.wallet_address:
-            print(">> ⚠️ HANDS ERROR: Missing Credentials (Env Vars or Args)")
-            # We don't exit here to allow for graceful failures or testing, 
-            # but main.py will likely catch this.
+        if not self.private_key:
+            print(">> ⚠️ HANDS ERROR: Missing Private Key (Env Vars or Args)")
             return
 
         # 2. INITIALIZE HYPERLIQUID SDK
         try:
+            # Load Account (LocalAccount object)
             self.account = Account.from_key(self.private_key)
+            
+            # CRITICAL FIX: Handle LocalAccount object correctly (Dot notation vs Dictionary)
+            # This fixes the "object is not subscriptable" error
+            if hasattr(self.account, 'address'):
+                derived_address = self.account.address
+            else:
+                # Fallback if library changes
+                derived_address = str(self.account)
+
+            # If wallet_address wasn't provided in env, use the derived one
+            if not self.wallet_address:
+                self.wallet_address = derived_address
+            
+            print(f">> Wallet Connected: {self.wallet_address[:6]}...{self.wallet_address[-4:]}")
+
             # Mainnet by default. Change base_url if using Testnet.
             self.info = Info(constants.MAINNET_API_URL, skip_ws=True)
             self.exchange = Exchange(self.account, constants.MAINNET_API_URL, self.account)
+            
             print(">> Hands: Connected to Hyperliquid Mainnet")
+
         except Exception as e:
             print(f">> ⚠️ HANDS INIT ERROR: {e}")
+            # We allow the bot to continue even if Hands fails, so it can still scan (Silent Mode)
 
     def get_positions(self):
         """
@@ -36,6 +53,8 @@ class Hands:
         Format: [{'coin': 'WIF', 'size': 100.0, 'entry': 2.50, 'pnl': 5.0}, ...]
         """
         try:
+            if not self.wallet_address: return []
+
             user_state = self.info.user_state(self.wallet_address)
             raw_pos = user_state.get("assetPositions", [])
             clean_pos = []
