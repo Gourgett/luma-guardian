@@ -7,7 +7,7 @@ import os
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Luma Command v2.9", layout="wide", page_icon="🛡️")
+st.set_page_config(page_title="Luma Command v3.0", layout="wide", page_icon="🛡️")
 
 # [LUMA MEMORY] Hard Sell Logic
 HARD_SELL_PERCENT = 0.02 
@@ -34,15 +34,35 @@ def load_json(filepath):
     except: return None
 
 def format_signal(signal):
+    """
+    Translates System Codes to readable UI Signals.
+    """
     s = str(signal).upper()
-    if "ATTACK" in s:      return "⚔️ ATTACK"
-    if "WHALE" in s:       return "🐋 WHALE ALERT"
-    if "FAKE" in s:        return "⚠️ FAKE PUMP"
-    if "SIGNAL FOUND" in s: return "⚡ SIGNAL FOUND"
-    if "BUY" in s:         return "🟢 BUY"
-    if "SELL" in s:        return "🔴 SELL"
-    if "NEUTRAL" in s:     return "Scanning..."
-    if "WAITING" in s:     return "Scanning..."
+    
+    # 1. ATTACK / BREAKOUTS
+    if "ATTACK" in s or "BREAKOUT" in s: return "⚔️ BREAKOUT"
+    
+    # 2. SMART MONEY / PRINCE
+    if "PRINCE" in s:
+        if "TREND" in s: return "👑 PRINCE TREND"
+        return "👑 SMART MONEY"
+        
+    # 3. MEME SIGNALS
+    if "MEME" in s:
+        if "DUMP" in s: return "⚠️ MEME DUMP"
+        return "🚀 MEME PUMP"
+
+    # 4. STANDARD SIGNALS
+    if "WHALE" in s:        return "🐋 WHALE ALERT"
+    if "FAKE" in s:         return "⚠️ FAKE PUMP"
+    if "FVG" in s:          return "👻 GHOST GAP"
+    if "BUY" in s:          return "🟢 BUY SIGNAL"
+    if "SELL" in s:         return "🔴 SELL SIGNAL"
+    
+    # 5. IDLE STATES
+    if "NEUTRAL" in s:      return "Scanning..."
+    if "WAITING" in s:      return "Scanning..."
+    
     return s
 
 # ==========================================
@@ -129,18 +149,17 @@ if data:
         df['Symbol'] = df['coin']
         df['Signal'] = df['quality'].apply(format_signal)
         df['Price'] = df['price']
-        df['Vol (M)'] = df['vol_m']
+        # Vol column removed as requested
         df['Hard Sell'] = df['price'].apply(calculate_hard_sell)
         
         st.dataframe(
-            df[['Symbol', 'Signal', 'Price', 'Vol (M)', 'Hard Sell']],
+            df[['Symbol', 'Signal', 'Price', 'Hard Sell']],
             use_container_width=True,
             column_config={
                 "Symbol": st.column_config.TextColumn("Asset", width="small"),
                 "Signal": st.column_config.TextColumn("Luma Signal", width="medium"),
                 "Price": st.column_config.NumberColumn(format="$%.4f"),
                 "Hard Sell": st.column_config.NumberColumn(format="$%.4f", help="-2% Liquid Projection"),
-                "Vol (M)": st.column_config.NumberColumn(format="%.2f M"),
             },
             hide_index=True
         )
@@ -156,9 +175,16 @@ if data:
 
     if positions:
         pos_df = pd.DataFrame(positions)
-        # ROE Calc
+        
+        # 1. ROE Calculation
+        # Approx Margin = (Entry * Size) / 5. Used for ROE calc.
         pos_df['ROE'] = (pos_df['pnl'] / (pos_df['entry'] * pos_df['size'].abs() / 5)) * 100 
-        # Status Check
+        
+        # 2. Margin Calculation (The "How much I put in" Column)
+        # Formula: (Entry Price * Size Coins) / Leverage (5x)
+        pos_df['Margin'] = (pos_df['entry'] * pos_df['size'].abs()) / 5
+        
+        # 3. Status Check
         pos_df['Status'] = pos_df['coin'].apply(
             lambda x: "🔒 SECURED" if x in secured_coins else "🌊 RISK ON"
         )
@@ -168,7 +194,8 @@ if data:
             column_config={
                 "coin": "Symbol",
                 "Status": st.column_config.TextColumn("Risk Status", width="medium"),
-                "size": "Size",
+                "Margin": st.column_config.NumberColumn("Margin ($)", format="$%.2f"),
+                "size": st.column_config.NumberColumn("Size (Coins)", format="%.4f"),
                 "entry": st.column_config.NumberColumn("Entry", format="$%.4f"),
                 "pnl": st.column_config.NumberColumn("PnL ($)", format="$%.2f"),
                 "ROE": st.column_config.NumberColumn("ROE (%)", format="%.2f %%"),
