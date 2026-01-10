@@ -3,12 +3,11 @@ import pandas as pd
 import time
 import json
 import os
-from datetime import datetime
 
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Luma Command v2.5", layout="wide", page_icon="🛡️")
+st.set_page_config(page_title="Luma Command v2.7", layout="wide", page_icon="🛡️")
 
 # [LUMA MEMORY] Hard Sell Logic
 HARD_SELL_PERCENT = 0.02 
@@ -18,14 +17,14 @@ def calculate_hard_sell(price):
     return float(price) * (1 - HARD_SELL_PERCENT)
 
 # ==========================================
-# 2. DATA FETCHING (State + Stats)
+# 2. DATA LOADING
 # ==========================================
-# Paths match your Railway 'main.py' configuration
+# Matches your Railway/Main.py paths
 DATA_DIR = "data"
 STATE_FILE = os.path.join(DATA_DIR, "dashboard_state.json")
 STATS_FILE = os.path.join(DATA_DIR, "stats.json")
 
-# Fallback for local testing if folder doesn't exist
+# Fallback for local testing
 if not os.path.exists(STATE_FILE): STATE_FILE = "dashboard_state.json"
 if not os.path.exists(STATS_FILE): STATS_FILE = "stats.json"
 
@@ -35,144 +34,166 @@ def load_json(filepath):
         with open(filepath, "r") as f: return json.load(f)
     except: return None
 
-def get_metrics(data):
-    if not data:
-        return {'Equity': 0, 'Cash': 0, 'PnL': 0, 'ROE': 0, 'Market': "OFFLINE"}
-    return {
-        'Equity': data.get('equity', 0.0),
-        'Cash': data.get('cash', 0.0),
-        'PnL': data.get('pnl', 0.0),
-        'ROE': data.get('account_roe', 0.0),
-        'Market': data.get('session', "Unknown"),
-    }
+def format_signal(signal):
+    """
+    Maps raw Xenomorph/Predator signals to UI labels.
+    """
+    s = str(signal).upper()
+    
+    if "ATTACK" in s:      return "⚔️ ATTACK"
+    if "WHALE" in s:       return "🐋 WHALE ALERT"
+    if "FAKE" in s:        return "⚠️ FAKE PUMP"
+    if "SIGNAL FOUND" in s: return "⚡ SIGNAL FOUND"
+    if "BUY" in s:         return "🟢 BUY"
+    if "SELL" in s:        return "🔴 SELL"
+    if "NEUTRAL" in s:     return "Scanning..."
+    if "WAITING" in s:     return "Scanning..."
+    
+    return s # Return raw signal if no match (e.g. "Scanning...")
 
 # ==========================================
-# 3. UI SECTIONS
+# 3. SIDEBAR (History)
 # ==========================================
-
-# --- SIDEBAR: PERFORMANCE HISTORY ---
 def render_sidebar():
     st.sidebar.title("🛡️ Luma Guardian")
     st.sidebar.markdown("---")
     
     stats = load_json(STATS_FILE)
     if not stats:
-        st.sidebar.warning("No Trade History Yet")
+        st.sidebar.info("Initializing Stats...")
         return
 
-    # Win/Loss Metrics
     wins = stats.get("wins", 0)
     losses = stats.get("losses", 0)
     total = wins + losses
-    win_rate = (wins / total * 100) if total > 0 else 0
+    win_rate = (wins / total * 100) if total > 0 else 0.0
 
     c1, c2 = st.sidebar.columns(2)
     c1.metric("Wins", wins)
     c2.metric("Losses", losses)
     st.sidebar.metric("Win Rate", f"{win_rate:.1f}%")
     
-    st.sidebar.markdown("### Recent Closes")
+    st.sidebar.markdown("### Recent Activity")
     history = stats.get("history", [])
     
-    if not history:
-        st.sidebar.text("Waiting for closes...")
-    else:
-        for trade in history[:10]: # Show last 10
+    if history:
+        for trade in history[:8]:
             color = "🟢" if trade['pnl'] > 0 else "🔴"
             st.sidebar.markdown(
-                f"**{color} {trade['coin']}** "
-                f"(${trade['pnl']}) "
-                f"<span style='color:grey; font-size:0.8em'>{trade['time'].split(' ')[1]}</span>", 
+                f"{color} **{trade['coin']}** (${trade['pnl']})",
                 unsafe_allow_html=True
             )
 
-# --- MAIN DASHBOARD ---
-state_data = load_json(STATE_FILE)
-metrics = get_metrics(state_data)
+# ==========================================
+# 4. MAIN DASHBOARD RENDER
+# ==========================================
+data = load_json(STATE_FILE)
 render_sidebar()
 
-# CSS Styling
+# Custom CSS for the Terminal Log
 st.markdown("""
 <style>
-    div[data-testid="stMetricValue"] { font-size: 1.2rem; }
-    div[data-testid="stMarkdownContainer"] p { font-size: 0.9rem; }
-    .log-box { font-family: 'Courier New'; font-size: 12px; color: #00FF00; background-color: #000; padding: 10px; border-radius: 5px; height: 200px; overflow-y: scroll; }
+    .terminal-box { 
+        font-family: 'Courier New', monospace; 
+        font-size: 13px; 
+        color: #33ff00; 
+        background-color: #0e0e0e; 
+        padding: 15px; 
+        border-radius: 5px; 
+        border: 1px solid #333;
+        height: 250px; 
+        overflow-y: scroll; 
+        white-space: pre-wrap;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# 1. HEADER METRICS
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Equity", f"${metrics['Equity']:,.2f}")
-c2.metric("Cash", f"${metrics['Cash']:,.2f}")
-c3.metric("PnL Season", f"${metrics['PnL']:,.2f}", delta=f"{metrics['PnL']}")
-c4.metric("ROE", f"{metrics['ROE']}%", delta=f"{metrics['ROE']}")
-c5.metric("Market", metrics['Market'])
+st.title("LUMA SINGULARITY COMMAND")
 
-st.divider()
+if data:
+    # --- A. METRICS ---
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Equity", f"${data.get('equity', 0):,.2f}")
+    c2.metric("Cash", f"${data.get('cash', 0):,.2f}")
+    c3.metric("PnL Season", f"${data.get('pnl', 0):,.2f}")
+    c4.metric("Market Mode", data.get('mode', 'STANDARD'))
 
-# 2. SCANNER (Cleaned Up)
-st.subheader("📡 Velocity Scanner")
-if state_data and 'scan_results' in state_data:
-    df = pd.DataFrame(state_data['scan_results'])
-    if not df.empty:
-        # Map & Filter Columns
+    st.divider()
+
+    # --- B. VELOCITY SCANNER ---
+    st.subheader("📡 Velocity Scanner (Live Feed)")
+    
+    scan_raw = data.get('scan_results', [])
+    if scan_raw:
+        df = pd.DataFrame(scan_raw)
+        
+        # 1. Map Columns
         df['Symbol'] = df['coin']
-        df['Type'] = "PERP"
-        df['Quality'] = df['quality'].apply(lambda x: "✅ FRENSZY" if "BUY" in str(x) else ("❄️ COOL" if "SELL" in str(x) else "Waiting..."))
+        
+        # 2. Apply Custom Signal Formatter (Whale, Attack, Fake Pump)
+        df['Signal'] = df['quality'].apply(format_signal)
+        
         df['Price'] = df['price']
         df['Vol (M)'] = df['vol_m']
         df['Hard Sell'] = df['price'].apply(calculate_hard_sell)
+        
+        # 3. Render Table
+        st.dataframe(
+            df[['Symbol', 'Signal', 'Price', 'Vol (M)', 'Hard Sell']],
+            use_container_width=True,
+            column_config={
+                "Symbol": st.column_config.TextColumn("Asset", width="small"),
+                "Signal": st.column_config.TextColumn("Luma Signal", width="medium"),
+                "Price": st.column_config.NumberColumn(format="$%.4f"),
+                "Hard Sell": st.column_config.NumberColumn(format="$%.4f", help="-2% Liquid Projection"),
+                "Vol (M)": st.column_config.NumberColumn(format="%.2f M"),
+            },
+            hide_index=True
+        )
+    else:
+        st.info("Scanner initializing... Waiting for first pulse.")
+
+    st.divider()
+
+    # --- C. LIVE POSITIONS ---
+    st.subheader("⚡ Active Positions")
+    positions = data.get('positions', [])
+    if positions:
+        pos_df = pd.DataFrame(positions)
+        # Calculate ROE approx if not provided
+        pos_df['ROE'] = (pos_df['pnl'] / (pos_df['entry'] * pos_df['size'].abs() / 5)) * 100 
 
         st.dataframe(
-            df[['Symbol', 'Type', 'Quality', 'Price', 'Vol (M)', 'Hard Sell']],
+            pos_df,
             column_config={
-                "Price": st.column_config.NumberColumn(format="$%.4f"),
-                "Hard Sell": st.column_config.NumberColumn(format="$%.4f", help="-2% Hard Stop Projection"),
-                "Vol (M)": st.column_config.NumberColumn(format="%.2f M"),
+                "coin": "Symbol",
+                "size": "Size",
+                "entry": st.column_config.NumberColumn("Entry", format="$%.4f"),
+                "pnl": st.column_config.NumberColumn("PnL ($)", format="$%.2f"),
+                "ROE": st.column_config.NumberColumn("ROE (%)", format="%.2f %%"),
             },
             use_container_width=True,
             hide_index=True
         )
     else:
-        st.info("Scanner Active - Waiting for next candle close...")
+        st.write("No active positions.")
+
+    st.divider()
+
+    # --- D. SYSTEM LOGS (TERMINAL) ---
+    st.subheader("📟 System Logs")
+    logs = data.get('logs', [])
+    if logs:
+        # Join logs with newlines
+        log_content = "\n".join(logs)
+        # Render as raw HTML div for styling (The "Terminal" look)
+        st.markdown(f'<div class="terminal-box">{log_content}</div>', unsafe_allow_html=True)
+    else:
+        st.text("Waiting for system logs...")
+
 else:
-    st.warning("Connecting to Main Loop...")
+    st.warning("Connecting to Main Loop... (Check if main.py is running)")
 
-st.divider()
-
-# 3. LIVE POSITIONS
-st.subheader("⚡ Live Positions")
-if state_data and 'positions' in state_data and state_data['positions']:
-    pos_df = pd.DataFrame(state_data['positions'])
-    pos_df['ROE %'] = (pos_df['pnl'] / (pos_df['entry'] * pos_df['size'].abs() / 5)) * 100 # Approx 5x lev
-    
-    st.dataframe(
-        pos_df,
-        column_config={
-            "coin": "Symbol",
-            "size": "Size",
-            "entry": st.column_config.NumberColumn("Entry", format="$%.4f"),
-            "pnl": st.column_config.NumberColumn("PnL ($)", format="$%.2f"),
-            "ROE %": st.column_config.NumberColumn("ROE", format="%.2f %%"),
-        },
-        use_container_width=True,
-        hide_index=True
-    )
-else:
-    st.write("No active positions.")
-
-st.divider()
-
-# 4. SYSTEM LOGS (Live Bot Confirmation)
-st.subheader("📟 System Logs")
-if state_data and 'logs' in state_data:
-    # Reverse logs to show newest first
-    logs = state_data['logs']
-    log_text = "\n".join(logs) if logs else "System initializing..."
-    st.text_area("Live Terminal Output", value=log_text, height=200, disabled=True)
-else:
-    st.text("Waiting for logs...")
-
-# Auto-Refresh
-time.sleep(2)
+# Auto-Refresh (Matches Pulse Speed)
+time.sleep(1) 
 st.rerun()
