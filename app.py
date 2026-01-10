@@ -3,6 +3,7 @@ import pandas as pd
 import time
 import json
 import os
+import datetime
 
 # ==========================================
 # 1. CONFIGURATION
@@ -19,18 +20,15 @@ def calculate_hard_sell(price):
 # ==========================================
 # 2. DATA LOADING (PATCHED)
 # ==========================================
-DATA_DIR = "data"
+# [FIX 1] ALIGN DIRECTORY LOGIC WITH BACKEND
+# This checks the Railway system folder first, then local
+DATA_DIR = "/app/data" if os.path.exists("/app/data") else "."
 STATE_FILE = os.path.join(DATA_DIR, "dashboard_state.json")
 STATS_FILE = os.path.join(DATA_DIR, "stats.json")
 
-# Fallback for local
-if not os.path.exists(STATE_FILE): STATE_FILE = "dashboard_state.json"
-if not os.path.exists(STATS_FILE): STATS_FILE = "stats.json"
-
 def load_json(filepath, retries=3):
     """
-    STABILITY PATCH: Retries loading JSON to handle race conditions 
-    if the backend is writing to the file simultaneously.
+    STABILITY PATCH: Retries loading JSON to handle race conditions.
     """
     if not os.path.exists(filepath): return None
     
@@ -39,7 +37,6 @@ def load_json(filepath, retries=3):
             with open(filepath, "r") as f:
                 return json.load(f)
         except json.JSONDecodeError:
-            # File might be mid-write; wait briefly and retry
             time.sleep(0.1)
             continue
         except Exception:
@@ -47,42 +44,37 @@ def load_json(filepath, retries=3):
     return None
 
 def format_signal(signal):
-    """
-    Translates System Codes to readable UI Signals.
-    """
+    """Translates System Codes to readable UI Signals."""
     s = str(signal).upper()
-    
-    # 1. ATTACK / BREAKOUTS
     if "ATTACK" in s or "BREAKOUT" in s: return "⚔️ BREAKOUT"
-    
-    # 2. SMART MONEY / PRINCE
     if "PRINCE" in s:
         if "TREND" in s: return "👑 PRINCE TREND"
         return "👑 SMART MONEY"
-        
-    # 3. MEME SIGNALS
     if "MEME" in s:
         if "DUMP" in s: return "⚠️ MEME DUMP"
         return "🚀 MEME PUMP"
-
-    # 4. STANDARD SIGNALS
     if "WHALE" in s:        return "🐋 WHALE ALERT"
     if "FAKE" in s:         return "⚠️ FAKE PUMP"
     if "FVG" in s:          return "👻 GHOST GAP"
     if "BUY" in s:          return "🟢 BUY SIGNAL"
     if "SELL" in s:         return "🔴 SELL SIGNAL"
-    
-    # 5. IDLE STATES
     if "NEUTRAL" in s:      return "Scanning..."
     if "WAITING" in s:      return "Scanning..."
-    
     return s
 
 # ==========================================
 # 3. SIDEBAR (History)
 # ==========================================
-def render_sidebar():
+def render_sidebar(last_update):
     st.sidebar.title("🛡️ Luma Guardian")
+    
+    # Connection Status Indicator
+    if last_update:
+        st.sidebar.success(f"⚡ Connected: {last_update}")
+        st.sidebar.caption(f"Reading from: {DATA_DIR}")
+    else:
+        st.sidebar.error("⚠️ Disconnected")
+
     st.sidebar.markdown("---")
     
     stats = load_json(STATS_FILE)
@@ -114,7 +106,14 @@ def render_sidebar():
 # 4. MAIN DASHBOARD RENDER
 # ==========================================
 data = load_json(STATE_FILE)
-render_sidebar()
+
+# Get timestamp of file to verify freshness
+last_update_time = None
+if os.path.exists(STATE_FILE):
+    t = os.path.getmtime(STATE_FILE)
+    last_update_time = datetime.datetime.fromtimestamp(t).strftime('%H:%M:%S')
+
+render_sidebar(last_update_time)
 
 # Custom CSS for Terminal
 st.markdown("""
@@ -134,19 +133,18 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# DYNAMIC TITLE (Based on Mode)
+# DYNAMIC TITLE
 mode = data.get('mode', 'STANDARD') if data else 'STANDARD'
 st.title(f"LUMA SINGULARITY COMMAND [{mode}]")
 
 if data:
-    # --- A. METRICS HEADER (5 COLUMNS) ---
+    # --- A. METRICS HEADER ---
     c1, c2, c3, c4, c5 = st.columns(5)
     
     c1.metric("Equity", f"${data.get('equity', 0):,.2f}")
     c2.metric("Cash", f"${data.get('cash', 0):,.2f}")
     c3.metric("PnL Season", f"${data.get('pnl', 0):,.2f}")
     
-    # Restored Metrics
     roe_val = data.get('account_roe', 0.0)
     c4.metric("Account ROE", f"{roe_val:.2f}%", delta=roe_val)
     c5.metric("Market Session", data.get('session', 'OFFLINE'))
@@ -162,26 +160,27 @@ if data:
         df['Symbol'] = df['coin']
         df['Signal'] = df['quality'].apply(format_signal)
         df['Price'] = df['price']
-        # Vol column removed as requested
         df['Hard Sell'] = df['price'].apply(calculate_hard_sell)
         
+        # [FIX 2] Replaced deprecated parameter with new syntax
         st.dataframe(
             df[['Symbol', 'Signal', 'Price', 'Hard Sell']],
-            use_container_width=True,
             column_config={
                 "Symbol": st.column_config.TextColumn("Asset", width="small"),
                 "Signal": st.column_config.TextColumn("Luma Signal", width="medium"),
                 "Price": st.column_config.NumberColumn(format="$%.4f"),
                 "Hard Sell": st.column_config.NumberColumn(format="$%.4f", help="-2% Liquid Projection"),
             },
-            hide_index=True
+            hide_index=True,
+            # This fixes the red wall of text
+            width=None  
         )
     else:
         st.info("Scanner initializing... Waiting for first pulse.")
 
     st.divider()
 
-    # --- C. LIVE POSITIONS (PATCHED) ---
+    # --- C. LIVE POSITIONS ---
     st.subheader("⚡ Active Positions")
     positions = data.get('positions', [])
     secured_coins = data.get('secured_coins', [])
@@ -189,19 +188,13 @@ if data:
     if positions:
         pos_df = pd.DataFrame(positions)
         
-        # 1. Margin Calculation (The "How much I put in" Column)
-        # Formula: (Entry Price * Size Coins) / Leverage (5x)
+        # Margin & ROE logic
         pos_df['Margin'] = (pos_df['entry'] * pos_df['size'].abs()) / 5
-        
-        # 2. ROE Calculation (STABILITY PATCH)
-        # Prevents division by zero if margin or size is not yet populated
         def safe_roe(row):
             if row['Margin'] == 0: return 0.0
             return (row['pnl'] / row['Margin']) * 100
 
         pos_df['ROE'] = pos_df.apply(safe_roe, axis=1)
-        
-        # 3. Status Check
         pos_df['Status'] = pos_df['coin'].apply(
             lambda x: "🔒 SECURED" if x in secured_coins else "🌊 RISK ON"
         )
@@ -217,8 +210,9 @@ if data:
                 "pnl": st.column_config.NumberColumn("PnL ($)", format="$%.2f"),
                 "ROE": st.column_config.NumberColumn("ROE (%)", format="%.2f %%"),
             },
-            use_container_width=True,
-            hide_index=True
+            hide_index=True,
+            # This fixes the red wall of text
+            width=None 
         )
     else:
         st.write("No active positions.")
@@ -229,14 +223,18 @@ if data:
     st.subheader("📟 System Logs")
     logs = data.get('logs', [])
     if logs:
-        log_content = "\n".join(logs)
+        # Show only last 50 lines to prevent lag
+        log_content = "\n".join(logs[:50]) 
         st.markdown(f'<div class="terminal-box">{log_content}</div>', unsafe_allow_html=True)
     else:
         st.text("Waiting for system logs...")
 
 else:
-    st.warning("Connecting to Main Loop... (Check if main.py is running)")
+    # Diagnostic Message if File Not Found
+    st.warning(f"Connecting to Main Loop... Looking in: {STATE_FILE}")
+    if not os.path.exists(STATE_FILE):
+        st.error(f"File NOT found at {STATE_FILE}. Waiting for main.py to create it.")
 
-# Auto-Refresh (Static Layout)
+# Auto-Refresh
 time.sleep(1) 
 st.rerun()
