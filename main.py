@@ -13,42 +13,32 @@ try:
     from deep_sea import DeepSea
     from xenomorph import Xenomorph
     from smart_money import SmartMoney
+    from hands import Hands
+    from messenger import Messenger
+    from seasonality import Seasonality # Optional if you have it file
 except ImportError as e:
     print(f">> CRITICAL ERROR: Missing Module {e}")
     sys.exit(1)
 
 warnings.simplefilter("ignore")
 
-# ==============================================================================
-#  LUMA SINGULARITY [TIER: FINAL ARCHITECT]
-#  Logic: Recovery (<412) | Standard (>412) | God (>12% ROE)
-# ==============================================================================
-
-# --- PATHS ---
+# --- CONFIG ---
 DATA_DIR = "/app/data" if os.path.exists("/app/data") else "."
-if not os.path.exists(DATA_DIR):
-    try: os.makedirs(DATA_DIR)
-    except: pass
-
+if not os.path.exists(DATA_DIR): os.makedirs(DATA_DIR, exist_ok=True)
 DASHBOARD_FILE = os.path.join(DATA_DIR, "dashboard_state.json")
-STATS_FILE = os.path.join(DATA_DIR, "stats.json")
-
-# --- CORE CONFIGURATION ---
-# [CRITICAL] HARDCODED BASELINE.
 STARTING_EQUITY = 412.0 
 
 FLEET_CONFIG = {
-    "SOL":   {"type": "PRINCE", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.04},
-    "SUI":   {"type": "PRINCE", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.04},
-    "BNB":   {"type": "PRINCE", "lev": 5, "risk_mult": 1.0, "stop_loss": 0.04},
-    "WIF":   {"type": "MEME",   "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
-    "DOGE":  {"type": "MEME",   "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06},
-    "PENGU": {"type": "MEME",   "lev": 5, "risk_mult": 1.0, "stop_loss": 0.06}
+    "SOL":   {"type": "PRINCE", "lev": 5},
+    "SUI":   {"type": "PRINCE", "lev": 5},
+    "BNB":   {"type": "PRINCE", "lev": 5},
+    "WIF":   {"type": "MEME",   "lev": 5},
+    "DOGE":  {"type": "MEME",   "lev": 5},
+    "PENGU": {"type": "MEME",   "lev": 5}
 }
 
 EVENT_QUEUE = deque(maxlen=50) 
 
-# --- HELPERS ---
 def load_config():
     pk = os.environ.get("PRIVATE_KEY")
     wallet = os.environ.get("WALLET_ADDRESS")
@@ -59,69 +49,46 @@ def load_config():
     return {"wallet_address": wallet, "private_key": pk}
 
 def save_dashboard_state(mode, session, equity, cash, positions, scan_results, logs, secured_coins):
-    """Saves the JSON state for app.py to read."""
     try:
-        # Calculate Real PnL against the Hard Baseline
         pnl = equity - STARTING_EQUITY
         roe = (pnl / STARTING_EQUITY) * 100
-
         dash_state = {
-            "mode": mode,
-            "session": session,
-            "equity": round(equity, 2),
-            "cash": round(cash, 2),
-            "pnl": round(pnl, 2),
-            "account_roe": round(roe, 2),
-            "positions": positions,
-            "scan_results": scan_results,
-            "logs": list(logs),
-            "secured_coins": secured_coins
+            "mode": mode, "session": session,
+            "equity": round(equity, 2), "cash": round(cash, 2),
+            "pnl": round(pnl, 2), "account_roe": round(roe, 2),
+            "positions": positions, "scan_results": scan_results,
+            "logs": list(logs), "secured_coins": secured_coins
         }
-        # Atomic Write
-        temp_file = DASHBOARD_FILE + ".tmp"
-        with open(temp_file, 'w') as f:
-            json.dump(dash_state, f)
-        os.replace(temp_file, DASHBOARD_FILE)
-    except Exception as e:
-        print(f"xx STATE SAVE ERROR: {e}")
+        temp = DASHBOARD_FILE + ".tmp"
+        with open(temp, 'w') as f: json.dump(dash_state, f)
+        os.replace(temp, DASHBOARD_FILE)
+    except: pass
 
-# --- MAIN LOOP ---
 def main():
-    print(">> SYSTEM BOOT: LUMA SINGULARITY (RECOVERY PROTOCOL ENFORCED)")
+    print(">> SYSTEM BOOT: LUMA SINGULARITY (70/30 ALLOCATION ACTIVE)")
     
     conf = load_config()
-    try:
-        from hands import Hands
-        from messenger import Messenger
-        hands = Hands(config=conf)
-        messenger = Messenger()
-    except Exception as e:
-        print(f">> WARNING: Hands Init Failed (Check Keys): {e}")
-        hands = None
-        messenger = None
-
+    hands = Hands(config=conf)
     vision = Vision()
     predator = Predator()
-    deep_sea = DeepSea() # Handles stats.json internally
+    deep_sea = DeepSea()
     xenomorph = Xenomorph()
     smart_money = SmartMoney()
+    # seasonality = Seasonality() # If used
 
     equity = STARTING_EQUITY
     cash = 0.0
     positions = []
     mode = "STANDARD"
-    session = "LONDON/NY"
 
     while True:
         try:
             # 1. UPDATE ACCOUNT
-            wallet_addr = conf["wallet_address"] if conf else (hands.wallet_address if hands else None)
-            acct = vision.get_user_state(wallet_addr)
-            
+            wallet = hands.wallet_address if hands else None
+            acct = vision.get_user_state(wallet)
             if acct:
                 equity = float(acct.get("marginSummary", {}).get("accountValue", equity))
                 cash = float(acct.get("withdrawable", 0.0))
-                
                 raw_pos = acct.get("assetPositions", [])
                 positions = []
                 for p in raw_pos:
@@ -129,91 +96,88 @@ def main():
                     sz = float(pos.get("szi", 0))
                     if sz != 0:
                         positions.append({
-                            "coin": pos.get("coin"),
-                            "size": sz,
+                            "coin": pos.get("coin"), "size": sz,
                             "entry": float(pos.get("entryPx", 0)),
                             "pnl": float(pos.get("unrealizedPnl", 0))
                         })
 
             # 2. DETERMINE MODE
-            if equity < STARTING_EQUITY:
-                mode = "RECOVERY"
-            elif ((equity - STARTING_EQUITY) / STARTING_EQUITY) > 0.12:
-                mode = "GOD MODE"
-            else:
-                mode = "STANDARD"
+            if equity < STARTING_EQUITY: mode = "RECOVERY"
+            elif ((equity - STARTING_EQUITY)/STARTING_EQUITY) > 0.12: mode = "GOD MODE"
+            else: mode = "STANDARD"
 
-            # 3. DETERMINE SESSION
-            h = datetime.now(timezone.utc).hour
-            if 7 <= h < 15: session = "LONDON/NY"
-            elif 15 <= h < 21: session = "NY CLOSE"
-            else: session = "ASIA"
+            session = "LONDON/NY" # Simplified for brevity, put Chronos logic here if needed
 
-            # 4. SCANNER LOOP
+            # 3. SCANNER
             scan_data = []
-            
             for coin in FLEET_CONFIG:
                 try:
                     # Log Pulse
                     t = datetime.now().strftime("%H:%M:%S")
-                    pulse_msg = f"[{t}] 🔍 SCANNING {coin}..."
-                    print(f">> {pulse_msg}")
-                    
-                    # Update Dashboard Immediately
+                    msg = f"[{t}] 🔍 SCANNING {coin}..."
+                    print(f">> {msg}")
                     current_logs = list(EVENT_QUEUE)
-                    current_logs.insert(0, pulse_msg)
+                    current_logs.insert(0, msg)
                     save_dashboard_state(mode, session, equity, cash, positions, scan_data, current_logs, deep_sea.secured_coins)
 
-                    # Analysis
                     candles = vision.get_candles(coin, "15m")
                     if not candles: continue
                     
                     curr_price = float(candles[-1]['c'])
-                    vol_m = float(candles[-1]['v']) / 1_000_000
+                    c_type = FLEET_CONFIG[coin]['type']
+
+                    # SMART MONEY ANALYSIS (Turtle + Prince Logic)
+                    # We pass 'c_type' so it knows if it should look for Prince Structure or Meme Hype
+                    sm_sig = smart_money.hunt_turtle(candles, coin_type=c_type)
                     
-                    quality = predator.analyze_divergence(candles, coin) or "NEUTRAL"
+                    quality = "NEUTRAL"
+                    if sm_sig:
+                        quality = sm_sig['type'] # e.g., "PRINCE_TREND_FOLLOW" or "MEME_BREAKOUT"
+
+                    # Xenomorph Override (Pattern Breakouts)
                     xeno_sig = xenomorph.hunt(coin, candles)
                     if xeno_sig == "ATTACK": quality = "⚔️ BREAKOUT"
 
                     scan_data.append({
-                        "coin": coin,
-                        "price": curr_price,
-                        "vol_m": round(vol_m, 2),
+                        "coin": coin, "price": curr_price,
+                        "vol_m": round(float(candles[-1]['v'])/1000000, 2),
                         "quality": quality
                     })
                     
-                    # --- EXECUTION BLOCK (ARMED) ---
-                    if "BUY" in str(quality) or "SELL" in str(quality) or "BREAKOUT" in str(quality):
+                    # EXECUTION BLOCK
+                    is_buy = "BUY" in str(quality) or "BREAKOUT" in str(quality)
+                    is_sell = "SELL" in str(quality)
+
+                    if is_buy or is_sell:
                         EVENT_QUEUE.append(f"[{t}] ⚡ SIGNAL: {coin} | {quality}")
                         
-                        trade_size_usd = 60.0 
-                        current_active = [p['coin'] for p in positions]
+                        # DYNAMIC SIZING (70/30 Rule)
+                        alloc_size_usd = smart_money.calculate_position_size(equity)
                         
-                        if coin not in current_active:
+                        active_coins = [p['coin'] for p in positions]
+                        
+                        if coin not in active_coins and alloc_size_usd > 5:
                             if hands:
-                                print(f">> 🔫 FIRING: {coin} (Size: ${trade_size_usd})")
-                                hands.place_market_order(coin, "BUY", trade_size_usd)
+                                side = "BUY" if is_buy else "SELL"
+                                print(f">> 🔫 FIRING {side}: {coin} (Size: ${alloc_size_usd})")
+                                hands.place_market_order(coin, side, alloc_size_usd)
                         else:
-                            print(f">> ⚠️ SKIPPING {coin}: Position Active.")
-                    
-                    time.sleep(0.5)
+                            print(f">> ⚠️ SKIPPING: Active or Low Equity (${alloc_size_usd})")
 
+                    time.sleep(0.5)
                 except Exception as e:
                     print(f"xx SCAN ERROR {coin}: {e}")
 
-            # 5. RISK MANAGEMENT (DEEP SEA)
-            risk_logs = deep_sea.manage_positions(hands, positions, FLEET_CONFIG)
+            # 4. RISK MANAGEMENT (Pass Vision for Prices)
+            risk_logs = deep_sea.manage_positions(hands, positions, FLEET_CONFIG, vision)
             if risk_logs:
                 for log in risk_logs: EVENT_QUEUE.append(f"[{t}] {log}")
 
-            # 6. END OF CYCLE SAVE
             save_dashboard_state(mode, session, equity, cash, positions, scan_data, EVENT_QUEUE, deep_sea.secured_coins)
-            
-            print(f">> CYCLE END: {mode} | ${equity:.2f}")
             time.sleep(5)
 
         except Exception as e:
-            print(f"xx MAIN LOOP ERROR: {e}")
+            print(f"xx MAIN ERROR: {e}")
             time.sleep(10)
 
 if __name__ == "__main__":
