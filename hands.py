@@ -1,7 +1,6 @@
 import json
 import time
 import os
-import logging
 from eth_account import Account
 from hyperliquid.info import Info
 from hyperliquid.exchange import Exchange
@@ -9,59 +8,48 @@ from hyperliquid.utils import constants
 
 class Hands:
     def __init__(self, config=None):
-        """
-        LUMA EXECUTION MODULE (Hyperliquid Restore)
-        Restores ability to trade SOL, SUI, BNB, and MEMES via Perps.
-        """
-        print(">> Hands (Execution): Initializing Hyperliquid Bridge...")
-        self.config = config if config else self._load_local_config()
+        print(">> HANDS ARMED: Initializing Hyperliquid Bridge...")
         
-        # 1. Credentials
-        self.private_key = self.config.get('private_key') or os.getenv("PRIVATE_KEY")
-        self.wallet_address = self.config.get('wallet_address') or os.getenv("WALLET_ADDRESS")
+        # Load Keys (Railway Env Vars)
+        self.private_key = os.getenv("PRIVATE_KEY")
+        self.wallet_address = os.getenv("WALLET_ADDRESS")
+        
+        if config and not self.private_key:
+            self.private_key = config.get("private_key")
+            self.wallet_address = config.get("wallet_address")
 
         if not self.private_key:
             print(">> HANDS ERROR: Missing Private Key. Execution Disabled.")
             self.exchange = None
+            self.wallet_address = None
             return
 
-        # 2. Connect to Exchange
         try:
+            # Initialize Hyperliquid Connection
             self.account = Account.from_key(self.private_key)
-            # Ensure address matches key derivation
             if not self.wallet_address:
                 self.wallet_address = self.account.address
             
-            # API Connection
             self.info = Info(constants.MAINNET_API_URL, skip_ws=True)
             self.exchange = Exchange(self.account, constants.MAINNET_API_URL)
-            print(f">> HANDS ARMED: Connected to Hyperliquid [{self.wallet_address[:6]}...]")
+            print(f">> HANDS CONNECTED: {self.wallet_address[:8]}...")
             
         except Exception as e:
-            print(f">> HANDS CONNECTION FAILED: {e}")
+            print(f"xx HANDS CONNECTION FAILED: {e}")
             self.exchange = None
-
-    def _load_local_config(self):
-        try:
-            with open("server_config.json", "r") as f:
-                return json.load(f)
-        except:
-            return {}
+            self.wallet_address = None
 
     def _get_precision(self, coin):
-        # BLUEPRINT PRECISION MAP (Source: Termux Dump)
-        # (Price Decimals, Size Decimals)
+        # HARDCODED FLEET PRECISION
         if coin == "SOL":   return (2, 2)
         if coin == "SUI":   return (4, 1)
-        if coin == "BNB":   return (1, 3) # Added BNB
+        if coin == "BNB":   return (1, 3)
         if coin == "WIF":   return (4, 1)
         if coin == "DOGE":  return (5, 0)
         if coin == "PENGU": return (5, 0)
-        # Default
         return (4, 1)
 
     def cancel_all_orders(self, coin):
-        """Sweeps active orders for a specific coin to prevent conflicts."""
         if not self.exchange: return
         try:
             open_orders = self.info.open_orders(self.wallet_address)
@@ -73,64 +61,57 @@ class Hands:
             print(f"xx CLEANUP ERROR: {e}")
 
     def place_trap(self, coin, side, price, size_usd):
-        """Places a Limit Order (The Trap)."""
         if not self.exchange: return
-        
-        # 1. Cleanup
         self.cancel_all_orders(coin)
 
-        # 2. Calculate Precision
         px_prec, sz_prec = self._get_precision(coin)
         final_price = round(price, px_prec)
         
         if final_price == 0: return
 
-        # 3. Calculate Size in Coins
         raw_size = size_usd / final_price
-        if sz_prec == 0:
-            final_size = int(raw_size)
-        else:
-            final_size = round(raw_size, sz_prec)
+        if sz_prec == 0: final_size = int(raw_size)
+        else: final_size = round(raw_size, sz_prec)
 
-        if final_size == 0:
-            print(f"xx SIZE ERROR: {size_usd} USD is too small for {coin}")
-            return
+        if final_size == 0: return
 
-        # 4. Execute
         print(f">> 🕸️ TRAP: {side} {coin} @ {final_price} (Size: {final_size})")
         try:
             is_buy = True if side == "BUY" else False
-            # Gtc = Good Til Cancelled
             res = self.exchange.order(coin, is_buy, final_size, final_price, {"limit": {"tif": "Gtc"}})
-            
             if res['status'] == 'err':
-                print(f"xx EXCHANGE REJECTED: {res['response']}")
-            else:
-                print(f">> ORDER CONFIRMED.")
-                
+                print(f"xx REJECTED: {res['response']}")
         except Exception as e:
             print(f"xx ORDER EXCEPTION: {e}")
 
-    def place_market_order(self, coin, side, size_coins):
-        """Panic/Secure Profit execution."""
+    def place_market_order(self, coin, side, size_usd):
+        # NOTE: size_usd is passed here. We convert to coins.
         if not self.exchange: return
         try:
+            # 1. Get Price for Conversion
+            # We assume current price is close to last trade, or we fetch fresh?
+            # For speed, we just trust the call, but ideally we fetch price here.
+            # Simplified: We treat size_usd as "number of coins" if the caller failed to convert,
+            # BUT main.py passes 60.0 USD. We need the price.
+            
+            # SAFEGUARD: To avoid crash, we need to fetch price to convert USD -> Coins
+            # Since Hands shouldn't depend on Vision, we use the Exchange info if possible,
+            # or we rely on the caller to pass 'size_coins'. 
+            
+            # HOTFIX for Main.py passing USD:
+            # We will use the 'allMids' from info to convert quickly.
+            prices = self.info.all_mids()
+            price = float(prices.get(coin, 0))
+            if price == 0: return
+
+            size_coins = size_usd / price
+
             _, sz_prec = self._get_precision(coin)
-            if sz_prec == 0:
-                sz = int(size_coins)
-            else:
-                sz = round(float(size_coins), sz_prec)
+            if sz_prec == 0: sz = int(size_coins)
+            else: sz = round(float(size_coins), sz_prec)
 
             is_buy = True if side == "BUY" else False
             print(f"⚡ MARKET {side}: {coin} x {sz}")
             self.exchange.market_open(coin, is_buy, sz)
-            
         except Exception as e:
             print(f"xx MARKET FAIL: {e}")
-
-    def update_leverage(self, coin, lev):
-        if not self.exchange: return
-        try:
-            self.exchange.update_leverage(lev, coin)
-            # print(f">> Lev set to {lev}x for {coin}")
-        except: pass
