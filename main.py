@@ -13,6 +13,8 @@ try:
     from deep_sea import DeepSea
     from xenomorph import Xenomorph
     from smart_money import SmartMoney
+    from hands import Hands 
+    from messenger import Messenger
 except ImportError as e:
     print(f">> CRITICAL ERROR: Missing Module {e}")
     sys.exit(1)
@@ -33,7 +35,6 @@ DASHBOARD_FILE = os.path.join(DATA_DIR, "dashboard_state.json")
 STARTING_EQUITY = 412.0
 MIN_EQUITY_THRESHOLD = 150.0
 
-# --- FLEET CONFIG ---
 FLEET_CONFIG = {
     "SOL":   {"type": "PRINCE", "lev": 5},
     "SUI":   {"type": "PRINCE", "lev": 5},
@@ -43,11 +44,9 @@ FLEET_CONFIG = {
     "PENGU": {"type": "MEME",   "lev": 5}
 }
 
-# Increased queue size for Verbose Logs
 EVENT_QUEUE = deque(maxlen=50)
 
 def load_config():
-    # Prioritize Railway Env Vars
     pk = os.environ.get("PRIVATE_KEY")
     wallet = os.environ.get("WALLET_ADDRESS")
     if not pk:
@@ -56,7 +55,11 @@ def load_config():
         except: return None
     return {"wallet_address": wallet, "private_key": pk}
 
-def save_dashboard_state(mode, session, equity, cash, positions, scan_results, logs):
+def save_dashboard_state(mode, session, equity, cash, positions, scan_results, logs, secured_coins):
+    """
+    Updates the dashboard JSON.
+    NOW INCLUDES: 'secured_coins' list from Deep Sea.
+    """
     try:
         dash_state = {
             "mode": mode,
@@ -67,9 +70,9 @@ def save_dashboard_state(mode, session, equity, cash, positions, scan_results, l
             "account_roe": round(((equity - STARTING_EQUITY) / STARTING_EQUITY) * 100, 2),
             "positions": positions,
             "scan_results": scan_results,
-            "logs": list(logs) # Saves the full log history
+            "logs": list(logs),
+            "secured_coins": secured_coins # <--- NEW DATA POINT
         }
-        # Atomic Write
         temp_file = DASHBOARD_FILE + ".tmp"
         with open(temp_file, 'w') as f:
             json.dump(dash_state, f)
@@ -78,23 +81,15 @@ def save_dashboard_state(mode, session, equity, cash, positions, scan_results, l
         print(f"xx STATE SAVE ERROR: {e}")
 
 def main():
-    print(">> SYSTEM BOOT: LUMA SINGULARITY (VERBOSE MODE)")
+    print(">> SYSTEM BOOT: LUMA SINGULARITY (DEEP SEA ACTIVE)")
     
     conf = load_config()
-    # Late import to avoid circular dependency crashes
-    try:
-        from hands import Hands
-        from messenger import Messenger
-        hands = Hands(config=conf)
-        messenger = Messenger()
-    except Exception as e:
-        print(f">> WARNING: Hands/Messenger Init Failed: {e}")
-        hands = None
-        messenger = None
-
+    hands = Hands(config=conf)
+    messenger = Messenger()
     vision = Vision()
     predator = Predator()
     xenomorph = Xenomorph()
+    deep_sea = DeepSea() # Risk Manager
     
     equity = STARTING_EQUITY
     cash = 0.0
@@ -128,32 +123,28 @@ def main():
             scan_data_for_dashboard = [] 
             
             for coin in FLEET_CONFIG:
-                # --- VERBOSE LOGGING START ---
+                # Heartbeat Log
                 t = datetime.now().strftime("%H:%M:%S")
-                log_msg = f"[{t}] 🔍 SCANNING {coin}..."
-                print(f">> {log_msg}")
-                EVENT_QUEUE.appendleft(log_msg) # Add to Dashboard Log
+                pulse_msg = f"[{t}] 🔍 SCANNING {coin}..."
+                print(f">> {pulse_msg}")
                 
-                # Immediate Save so Dashboard updates "Scanning..." in real time
-                save_dashboard_state(mode, session, equity, cash, positions, scan_data_for_dashboard, EVENT_QUEUE)
-                # -----------------------------
+                # Transient Log for Dashboard
+                current_logs = list(EVENT_QUEUE)
+                current_logs.insert(0, pulse_msg)
+                
+                # PASS SECURED COINS TO DASHBOARD
+                save_dashboard_state(mode, session, equity, cash, positions, scan_data_for_dashboard, current_logs, deep_sea.secured_coins)
 
+                # Fetch & Analyze
                 candles = vision.get_candles(coin, "15m")
-                if not candles: 
-                    EVENT_QUEUE.appendleft(f"[{t}] ⚠️ {coin}: No Data")
-                    continue
+                if not candles: continue
                 
                 curr_price = float(candles[-1]['c'])
                 quality = predator.analyze_divergence(candles, coin) or "WAITING"
-                
-                # Logic: If Xenomorph is active, override
                 xeno_sig = xenomorph.hunt(coin, candles)
+                
                 if xeno_sig == "ATTACK": quality = "⚔️ BREAKOUT"
 
-                # Append Result to Log
-                if quality != "WAITING":
-                    EVENT_QUEUE.appendleft(f"[{t}] 🎯 {coin}: {quality}")
-                
                 scan_data_for_dashboard.append({
                     "coin": coin,
                     "price": curr_price,
@@ -162,19 +153,23 @@ def main():
                     "liquidity_price": 0.0 
                 })
 
-                # --- EXECUTION BLOCK ---
-                # This ensures we actually trade if Hands is ready
                 if quality == "REAL_PUMP" or xeno_sig == "ATTACK":
-                    if hands:
-                        print(f">> EXECUTING ON {coin}")
-                        # hands.place_trap(coin, "BUY", curr_price, 50.0) # Uncomment to arm
-                
-                time.sleep(0.5) 
+                    log = f"[{t}] ⚡ SIGNAL: {coin} | {quality}"
+                    EVENT_QUEUE.append(log)
+                    # hands.place_trap(coin, "BUY", curr_price, 50.0) # ARM THIS WHEN READY
 
-            # 3. SAVE CYCLE END
-            save_dashboard_state(mode, session, equity, cash, positions, scan_data_for_dashboard, EVENT_QUEUE)
+                time.sleep(0.5)
+
+            # 3. DEEP SEA MANAGEMENT (Active)
+            # This calculates stops/breakevens and updates the secured_coins list
+            risk_logs = deep_sea.manage_positions(hands, positions, FLEET_CONFIG)
+            if risk_logs:
+                for log in risk_logs:
+                    EVENT_QUEUE.append(f"[{datetime.now().strftime('%H:%M:%S')}] {log}")
+
+            # 4. FINAL SAVE
+            save_dashboard_state(mode, session, equity, cash, positions, scan_data_for_dashboard, EVENT_QUEUE, deep_sea.secured_coins)
             
-            # 4. SLEEP
             print(f">> CYCLE PAUSE. Eq: ${equity:.2f}")
             time.sleep(5) 
 
