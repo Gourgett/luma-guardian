@@ -25,7 +25,9 @@ warnings.simplefilter("ignore")
 # --- CONFIG ---
 DATA_DIR = "/app/data" if os.path.exists("/app/data") else "."
 if not os.path.exists(DATA_DIR): os.makedirs(DATA_DIR, exist_ok=True)
+
 DASHBOARD_FILE = os.path.join(DATA_DIR, "dashboard_state.json")
+LOG_FILE = os.path.join(DATA_DIR, "system.log") # Permanent Memory
 STARTING_EQUITY = 412.0 
 
 # Default Config (Baseline)
@@ -49,7 +51,19 @@ def load_config():
         except: return None
     return {"wallet_address": wallet, "private_key": pk}
 
+def log_permanent(message):
+    """Writes logs to disk for permanent memory."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with open(LOG_FILE, "a") as f:
+            f.write(f"[{timestamp}] {message}\n")
+    except: pass
+
 def save_dashboard_state(mode, session, equity, cash, positions, scan_results, logs, secured_coins):
+    """
+    STABILITY PATCH: Includes retry logic to prevent crashes 
+    if the Dashboard is reading the file simultaneously.
+    """
     try:
         pnl = equity - STARTING_EQUITY
         roe = (pnl / STARTING_EQUITY) * 100
@@ -60,10 +74,25 @@ def save_dashboard_state(mode, session, equity, cash, positions, scan_results, l
             "positions": positions, "scan_results": scan_results,
             "logs": list(logs), "secured_coins": secured_coins
         }
+        
         temp = DASHBOARD_FILE + ".tmp"
+        # 1. Write to temp
         with open(temp, 'w') as f: json.dump(dash_state, f)
-        os.replace(temp, DASHBOARD_FILE)
-    except: pass
+        
+        # 2. Atomic Replace with Retry
+        max_retries = 5
+        for i in range(max_retries):
+            try:
+                os.replace(temp, DASHBOARD_FILE)
+                break
+            except PermissionError:
+                time.sleep(0.1)
+            except Exception as e:
+                print(f"xx SAVE ERROR: {e}")
+                break
+                
+    except Exception as e:
+        print(f"xx STATE ERROR: {e}")
 
 def main():
     print(">> SYSTEM BOOT: LUMA SINGULARITY (70/30 ALLOCATION ACTIVE)")
@@ -75,11 +104,17 @@ def main():
     deep_sea = DeepSea()
     xenomorph = Xenomorph()
     smart_money = SmartMoney()
+    
+    # [PATCH] Initialize Messenger for Discord Webhooks
+    messenger = Messenger() 
 
     equity = STARTING_EQUITY
     cash = 0.0
     positions = []
     mode = "STANDARD"
+
+    # Initial Log
+    log_permanent("System Booted. 70/30 Allocation Active.")
 
     while True:
         try:
@@ -173,7 +208,12 @@ def main():
                     is_sell = "SELL" in str(quality)
 
                     if is_buy or is_sell:
-                        EVENT_QUEUE.append(f"[{t}] ⚡ SIGNAL: {coin} | {quality}")
+                        log_msg = f"[{t}] ⚡ SIGNAL: {coin} | {quality}"
+                        EVENT_QUEUE.append(log_msg)
+                        log_permanent(log_msg)
+                        
+                        # [PATCH] Send Discord Alert
+                        messenger.send_message(f"🚨 **LUMA SIGNAL** 🚨\n**Coin:** {coin}\n**Signal:** {quality}\n**Price:** ${curr_price}")
                         
                         # DYNAMIC SIZING (70/30 Rule)
                         alloc_size_usd = smart_money.calculate_position_size(equity)
@@ -186,6 +226,7 @@ def main():
                                 # Note: Leverage is determined by FLEET_CONFIG settings here
                                 print(f">> 🔫 FIRING {side}: {coin} (Size: ${alloc_size_usd})")
                                 hands.place_market_order(coin, side, alloc_size_usd)
+                                log_permanent(f"Executed {side} on {coin} for ${alloc_size_usd}")
                         else:
                             print(f">> ⚠️ SKIPPING: Active or Low Equity (${alloc_size_usd})")
 
@@ -196,7 +237,10 @@ def main():
             # 4. RISK MANAGEMENT
             risk_logs = deep_sea.manage_positions(hands, positions, FLEET_CONFIG, vision)
             if risk_logs:
-                for log in risk_logs: EVENT_QUEUE.append(f"[{t}] {log}")
+                for log in risk_logs: 
+                    full_log = f"[{t}] {log}"
+                    EVENT_QUEUE.append(full_log)
+                    log_permanent(full_log)
 
             save_dashboard_state(mode, session, equity, cash, positions, scan_data, EVENT_QUEUE, deep_sea.secured_coins)
             
@@ -205,6 +249,7 @@ def main():
 
         except Exception as e:
             print(f"xx MAIN ERROR: {e}")
+            log_permanent(f"CRITICAL MAIN LOOP ERROR: {e}")
             time.sleep(10)
 
 if __name__ == "__main__":
