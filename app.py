@@ -10,7 +10,6 @@ import datetime
 # ==========================================
 st.set_page_config(page_title="Luma Command v3.0", layout="wide", page_icon="🛡️")
 
-# [LUMA MEMORY] Hard Sell Logic
 HARD_SELL_PERCENT = 0.02 
 
 def calculate_hard_sell(price):
@@ -18,15 +17,13 @@ def calculate_hard_sell(price):
     return float(price) * (1 - HARD_SELL_PERCENT)
 
 # ==========================================
-# 2. DATA LOADING (PATCHED)
+# 2. DATA LOADING
 # ==========================================
-# ALIGN DIRECTORY LOGIC WITH BACKEND
 DATA_DIR = "/app/data" if os.path.exists("/app/data") else "."
 STATE_FILE = os.path.join(DATA_DIR, "dashboard_state.json")
 STATS_FILE = os.path.join(DATA_DIR, "stats.json")
 
 def load_json(filepath, retries=3):
-    """STABILITY PATCH: Retries loading JSON to handle race conditions."""
     if not os.path.exists(filepath): return None
     for _ in range(retries):
         try:
@@ -40,7 +37,6 @@ def load_json(filepath, retries=3):
     return None
 
 def format_signal(signal):
-    """Translates System Codes to readable UI Signals."""
     s = str(signal).upper()
     if "ATTACK" in s or "BREAKOUT" in s: return "⚔️ BREAKOUT"
     if "PRINCE" in s:
@@ -59,7 +55,7 @@ def format_signal(signal):
     return s
 
 # ==========================================
-# 3. SIDEBAR (History)
+# 3. SIDEBAR
 # ==========================================
 def render_sidebar(last_update):
     st.sidebar.title("🛡️ Luma Guardian")
@@ -102,7 +98,6 @@ def render_sidebar(last_update):
 # ==========================================
 data = load_json(STATE_FILE)
 
-# Get timestamp of file to verify freshness
 last_update_time = None
 if os.path.exists(STATE_FILE):
     t = os.path.getmtime(STATE_FILE)
@@ -131,7 +126,7 @@ mode = data.get('mode', 'STANDARD') if data else 'STANDARD'
 st.title(f"LUMA SINGULARITY COMMAND [{mode}]")
 
 if data:
-    # --- A. METRICS HEADER ---
+    # --- A. METRICS ---
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Equity", f"${data.get('equity', 0):,.2f}")
     c2.metric("Cash", f"${data.get('cash', 0):,.2f}")
@@ -142,7 +137,7 @@ if data:
 
     st.divider()
 
-    # --- B. VELOCITY SCANNER ---
+    # --- B. SCANNER ---
     st.subheader("📡 Velocity Scanner (Live Feed)")
     scan_raw = data.get('scan_results', [])
     
@@ -153,7 +148,7 @@ if data:
         df['Price'] = df['price']
         df['Hard Sell'] = df['price'].apply(calculate_hard_sell)
         
-        # [FIX 2] STRICT WIDTH COMPLIANCE FOR NEW STREAMLIT
+        # [FIX] Set width="stretch" as required by your version
         st.dataframe(
             df[['Symbol', 'Signal', 'Price', 'Hard Sell']],
             column_config={
@@ -163,14 +158,14 @@ if data:
                 "Hard Sell": st.column_config.NumberColumn(format="$%.4f", help="-2% Liquid Projection"),
             },
             hide_index=True,
-            width=None  # Removed entirely to force default behavior, preventing crash
+            width="stretch"
         )
     else:
         st.info("Scanner initializing... Waiting for first pulse.")
 
     st.divider()
 
-    # --- C. LIVE POSITIONS ---
+    # --- C. POSITIONS ---
     st.subheader("⚡ Active Positions")
     positions = data.get('positions', [])
     secured_coins = data.get('secured_coins', [])
@@ -197,14 +192,14 @@ if data:
                 "ROE": st.column_config.NumberColumn("ROE (%)", format="%.2f %%"),
             },
             hide_index=True,
-            width=None # Removed entirely to force default behavior
+            width="stretch"
         )
     else:
         st.write("No active positions.")
 
     st.divider()
 
-    # --- D. SYSTEM LOGS ---
+    # --- D. LOGS ---
     st.subheader("📟 System Logs")
     logs = data.get('logs', [])
     if logs:
