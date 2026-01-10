@@ -1,150 +1,126 @@
-import json
-import time
 import os
-import math
+import time
+import json
 from eth_account import Account
-from hyperliquid.info import Info
 from hyperliquid.exchange import Exchange
 from hyperliquid.utils import constants
+from hyperliquid.info import Info
 
 class Hands:
-    def __init__(self):
-        print(">> HANDS ARMED: Exchange Connected (v3.5: DYNAMIC LEV)")
-        self.config = self._load_config()
+    def __init__(self, private_key=None, wallet_address=None):
+        print(">> Hands (Execution Module) Loaded")
         
-        # Priority: Railway Env Var -> server_config.json
-        key = os.environ.get("PRIVATE_KEY") or self.config.get('private_key') or self.config.get('secret_key')
+        # 1. LOAD CREDENTIALS (Env Vars Priority)
+        self.private_key = private_key or os.environ.get("PRIVATE_KEY")
+        self.wallet_address = wallet_address or os.environ.get("WALLET_ADDRESS")
         
-        if not key:
-            raise ValueError("CRITICAL: No 'PRIVATE_KEY' found in Environment Variables.")
+        if not self.private_key or not self.wallet_address:
+            print(">> ⚠️ HANDS ERROR: Missing Credentials (Env Vars or Args)")
+            # We don't exit here to allow for graceful failures or testing, 
+            # but main.py will likely catch this.
+            return
 
-        self.account = Account.from_key(key)
-        self.address = os.environ.get("WALLET_ADDRESS") or self.config.get('wallet_address')
-        
-        self.info = Info(constants.MAINNET_API_URL, skip_ws=True)
-        self.exchange = Exchange(self.account, constants.MAINNET_API_URL)
-        
-        # --- UNIVERSAL SIZING FIX ---
-        # Load the "Universe" (Metadata) from Hyperliquid to get exact decimals for EVERY coin.
+        # 2. INITIALIZE HYPERLIQUID SDK
         try:
-            print(">> HANDS: Loading Universe Metadata...")
-            self.meta = self.info.meta()
-            # Create a lookup dictionary: {'BTC': {'szDecimals': 3}, ...}
-            self.coin_map = {c['name']: c for c in self.meta['universe']}
-            print(">> HANDS: Universe Loaded (Universal Sizing Active).")
+            self.account = Account.from_key(self.private_key)
+            # Mainnet by default. Change base_url if using Testnet.
+            self.info = Info(constants.MAINNET_API_URL, skip_ws=True)
+            self.exchange = Exchange(self.account, constants.MAINNET_API_URL, self.account)
+            print(">> Hands: Connected to Hyperliquid Mainnet")
         except Exception as e:
-            print(f"xx HANDS WARNING: Could not load Universe: {e}")
-            self.coin_map = {}
+            print(f">> ⚠️ HANDS INIT ERROR: {e}")
 
-    def _load_config(self):
-        try:
-            with open("server_config.json") as f:
-                return json.load(f)
-        except: return {}
-
-    def set_leverage_all(self, coins, leverage):
+    def get_positions(self):
         """
-        V4.3 Compatible: Accepts dynamic leverage (3x or 5x).
+        Returns a normalized list of open positions.
+        Format: [{'coin': 'WIF', 'size': 100.0, 'entry': 2.50, 'pnl': 5.0}, ...]
         """
-        print(f">> HANDS: Enforcing {leverage}x Leverage on Fleet...")
-        for coin in coins:
-            try:
-                # The Fix: We explicitly cast to int here just to be 100% safe
-                self.exchange.update_leverage(int(leverage), coin)
-            except Exception as e:
-                # The Fix: No more silent failing. We print the error.
-                print(f"xx LEVERAGE FAILED for {coin}: {e}")
-        # print(">> HANDS: Leverage Synced.")
-
-    def cancel_all_orders(self, coin):
         try:
-            open_orders = self.info.open_orders(self.address)
-            for order in open_orders:
-                if order['coin'] == coin:
-                    print(f"🧹 SWEEPING: Canceling old order for {coin}")
-                    self.exchange.cancel(coin, order['oid'])
-                    time.sleep(0.5)
+            user_state = self.info.user_state(self.wallet_address)
+            raw_pos = user_state.get("assetPositions", [])
+            clean_pos = []
+            
+            for item in raw_pos:
+                p = item.get("position", {})
+                size = float(p.get("szi", 0))
+                
+                if size != 0:
+                    clean_pos.append({
+                        "coin": p.get("coin"),
+                        "size": size,
+                        "entry": float(p.get("entryPx", 0)),
+                        "pnl": float(p.get("unrealizedPnl", 0))
+                    })
+            return clean_pos
+            
         except Exception as e:
-            print(f"xx CLEANUP FAILED: {e}")
-
-    def _get_precision(self, coin):
-        # --- UNIVERSAL LOOKUP ---
-        # Instead of a hardcoded list, we ask the Exchange what the rule is.
-        if coin in self.coin_map:
-            # Get the official size decimals allowed by Hyperliquid
-            sz_dec = self.coin_map[coin]['szDecimals']
-            # Price precision is generally safe at 5 or 6 decimals for calculations
-            return (5, sz_dec)
-        
-        # Fallback for unexpected coins (Safety Net)
-        return (4, 1)
+            print(f"xx HANDS (Get Pos) ERROR: {e}")
+            return []
 
     def place_trap(self, coin, side, price, size_usd):
         """
-        Placing a Limit Order. 
-        Returns: TRUE if successful, FALSE if rejected.
+        Places a Limit Order (The 'Trap').
+        Auto-calculates the coin amount based on size_usd / price.
         """
-        self.cancel_all_orders(coin)
-        px_prec, sz_prec = self._get_precision(coin)
-        final_price = round(price, px_prec)
-
-        # Main.py passes size in USD (Notional). We convert to Coins here.
-        raw_size = size_usd / final_price
-        if sz_prec == 0:
-            final_size = int(raw_size)
-        else:
-            final_size = round(raw_size, sz_prec)
-
-        if final_size == 0:
-            print(f"xx SIZE TOO SMALL: {size_usd} -> 0 {coin}")
-            return False
-
-        print(f">> SETTING TRAP: {side} {coin} @ ${final_price} (Size: {final_size})")
-
         try:
-            is_buy = True if side == "BUY" else False
-            # We use Gtc (Good Til Canceled) to ensure it hits the book
-            result = self.exchange.order(coin, is_buy, final_size, final_price, {"limit": {"tif": "Gtc"}})
+            # Rounding for API precision (Hyperliquid is picky)
+            # Calculate size in COINS (sz)
+            sz = round(size_usd / price, 1) # 1 decimal place usually safe for memes
+            if sz == 0: return # Too small
             
-            # --- CRITICAL FIX: RETURN RECEIPT ---
-            if result['status'] == 'ok':
+            # Hyperliquid expects price as string sometimes, but SDK handles floats well if rounded
+            # Sig Figs: 5 for price usually safe
+            px = round(price, 5) 
+            
+            is_buy = True if side.upper() == "BUY" else False
+            
+            print(f">> ✋ PLACING TRAP: {side} {coin} | ${size_usd} (@ {px})")
+            
+            # Execute Limit Order
+            result = self.exchange.order(coin, is_buy, sz, px, {"limit": {"tif": "Gtc"}})
+            
+            if result.get("status") == "ok":
                 return True
-            elif result['status'] == 'err':
-                print(f"xx EXCHANGE REJECTED {coin}: {result['response']}")
-                return False
             else:
+                print(f"xx ORDER FAILED: {result}")
                 return False
 
         except Exception as e:
-            print(f"xx ORDER REJECTED (SDK): {e}")
+            print(f"xx TRAP ERROR: {e}")
             return False
 
-    def place_market_order(self, coin, side, size_coins):
+    def place_market_order(self, coin, side, size_coin):
         """
-        Executes Market Order.
-        Used by DeepSea for Stop Losses and Take Profits.
+        Executes an immediate Market Order (used for Stop Loss / Hard Take Profit).
+        size_coin: The exact amount of coins to close (abs value).
         """
-        is_buy = True if side == "BUY" else False
         try:
-            _, sz_prec = self._get_precision(coin)
-            if sz_prec == 0: sz = int(size_coins)
-            else: sz = round(float(size_coins), sz_prec)
+            is_buy = True if side.upper() == "BUY" else False
+            sz = abs(round(size_coin, 1)) # Ensure positive size
             
-            if sz == 0: return False
-            print(f"⚡ CASTING SPELL: MARKET {side} {sz} {coin}")
+            print(f">> 🚨 MARKET EXECUTION: {side} {coin} | Size: {sz}")
             
-            result = self.exchange.market_open(coin, is_buy, sz)
+            # Execute Market Order (limit with Tif: Ioc can simulate, but SDK has market_open helper usually)
+            # Standard generic order with is_buy, sz, px (ignored for market roughly), order_type
             
-            if result['status'] == 'ok':
+            # Using limit IOC with aggressive price crossing to simulate market
+            # Buy = High Price, Sell = Low Price
+            px = 999999 if is_buy else 0.00001
+            
+            result = self.exchange.order(coin, is_buy, sz, px, {"limit": {"tif": "Ioc"}})
+            
+            if result.get("status") == "ok":
                 return True
             else:
-                print(f"xx MARKET FAILED: {result['response']}")
+                print(f"xx MARKET ORDER FAILED: {result}")
                 return False
-                
+
         except Exception as e:
-            print(f"xx MARKET EXECUTION FAILED: {e}")
+            print(f"xx MARKET ERROR: {e}")
             return False
 
-    def place_stop(self, coin, price):
-        # Placeholder if needed later
-        pass
+    def cancel_all(self, coin):
+        # Helper to clear traps
+        try:
+            self.exchange.cancel_all_orders(coin)
+        except: pass
