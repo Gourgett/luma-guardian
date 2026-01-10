@@ -20,18 +20,14 @@ def calculate_hard_sell(price):
 # ==========================================
 # 2. DATA LOADING (PATCHED)
 # ==========================================
-# [FIX 1] ALIGN DIRECTORY LOGIC WITH BACKEND
-# This checks the Railway system folder first, then local
+# ALIGN DIRECTORY LOGIC WITH BACKEND
 DATA_DIR = "/app/data" if os.path.exists("/app/data") else "."
 STATE_FILE = os.path.join(DATA_DIR, "dashboard_state.json")
 STATS_FILE = os.path.join(DATA_DIR, "stats.json")
 
 def load_json(filepath, retries=3):
-    """
-    STABILITY PATCH: Retries loading JSON to handle race conditions.
-    """
+    """STABILITY PATCH: Retries loading JSON to handle race conditions."""
     if not os.path.exists(filepath): return None
-    
     for _ in range(retries):
         try:
             with open(filepath, "r") as f:
@@ -68,7 +64,6 @@ def format_signal(signal):
 def render_sidebar(last_update):
     st.sidebar.title("🛡️ Luma Guardian")
     
-    # Connection Status Indicator
     if last_update:
         st.sidebar.success(f"⚡ Connected: {last_update}")
         st.sidebar.caption(f"Reading from: {DATA_DIR}")
@@ -115,7 +110,6 @@ if os.path.exists(STATE_FILE):
 
 render_sidebar(last_update_time)
 
-# Custom CSS for Terminal
 st.markdown("""
 <style>
     .terminal-box { 
@@ -133,18 +127,15 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# DYNAMIC TITLE
 mode = data.get('mode', 'STANDARD') if data else 'STANDARD'
 st.title(f"LUMA SINGULARITY COMMAND [{mode}]")
 
 if data:
     # --- A. METRICS HEADER ---
     c1, c2, c3, c4, c5 = st.columns(5)
-    
     c1.metric("Equity", f"${data.get('equity', 0):,.2f}")
     c2.metric("Cash", f"${data.get('cash', 0):,.2f}")
     c3.metric("PnL Season", f"${data.get('pnl', 0):,.2f}")
-    
     roe_val = data.get('account_roe', 0.0)
     c4.metric("Account ROE", f"{roe_val:.2f}%", delta=roe_val)
     c5.metric("Market Session", data.get('session', 'OFFLINE'))
@@ -162,7 +153,7 @@ if data:
         df['Price'] = df['price']
         df['Hard Sell'] = df['price'].apply(calculate_hard_sell)
         
-        # [FIX 2] Replaced deprecated parameter with new syntax
+        # [FIX 2] STRICT WIDTH COMPLIANCE FOR NEW STREAMLIT
         st.dataframe(
             df[['Symbol', 'Signal', 'Price', 'Hard Sell']],
             column_config={
@@ -172,8 +163,7 @@ if data:
                 "Hard Sell": st.column_config.NumberColumn(format="$%.4f", help="-2% Liquid Projection"),
             },
             hide_index=True,
-            # This fixes the red wall of text
-            width=None  
+            width=None  # Removed entirely to force default behavior, preventing crash
         )
     else:
         st.info("Scanner initializing... Waiting for first pulse.")
@@ -187,17 +177,13 @@ if data:
 
     if positions:
         pos_df = pd.DataFrame(positions)
-        
-        # Margin & ROE logic
         pos_df['Margin'] = (pos_df['entry'] * pos_df['size'].abs()) / 5
         def safe_roe(row):
             if row['Margin'] == 0: return 0.0
             return (row['pnl'] / row['Margin']) * 100
 
         pos_df['ROE'] = pos_df.apply(safe_roe, axis=1)
-        pos_df['Status'] = pos_df['coin'].apply(
-            lambda x: "🔒 SECURED" if x in secured_coins else "🌊 RISK ON"
-        )
+        pos_df['Status'] = pos_df['coin'].apply(lambda x: "🔒 SECURED" if x in secured_coins else "🌊 RISK ON")
 
         st.dataframe(
             pos_df,
@@ -211,8 +197,7 @@ if data:
                 "ROE": st.column_config.NumberColumn("ROE (%)", format="%.2f %%"),
             },
             hide_index=True,
-            # This fixes the red wall of text
-            width=None 
+            width=None # Removed entirely to force default behavior
         )
     else:
         st.write("No active positions.")
@@ -223,18 +208,14 @@ if data:
     st.subheader("📟 System Logs")
     logs = data.get('logs', [])
     if logs:
-        # Show only last 50 lines to prevent lag
         log_content = "\n".join(logs[:50]) 
         st.markdown(f'<div class="terminal-box">{log_content}</div>', unsafe_allow_html=True)
     else:
         st.text("Waiting for system logs...")
-
 else:
-    # Diagnostic Message if File Not Found
     st.warning(f"Connecting to Main Loop... Looking in: {STATE_FILE}")
     if not os.path.exists(STATE_FILE):
         st.error(f"File NOT found at {STATE_FILE}. Waiting for main.py to create it.")
 
-# Auto-Refresh
 time.sleep(1) 
 st.rerun()
