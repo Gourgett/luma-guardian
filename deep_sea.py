@@ -5,23 +5,32 @@ from datetime import datetime
 
 class DeepSea:
     def __init__(self):
-        print(">> DEEP SEA: Smooth Trailing System Loaded")
+        print(">> DEEP SEA: Stepped Trailing Logic Loaded")
+        
+        # [PATCH] Align with Railway Directory Logic
         self.DATA_DIR = "/app/data" if os.path.exists("/app/data") else "."
+        if not os.path.exists(self.DATA_DIR): os.makedirs(self.DATA_DIR, exist_ok=True)
+            
         self.STATS_FILE = os.path.join(self.DATA_DIR, "stats.json")
         
         self.secured_coins = []
-        self.highest_prices = {} # Tracks highest price seen for trailing
+        self.highest_rois = {} # Tracks highest ROI % seen (not price)
         self.stats = self._load_stats()
 
     def _load_stats(self):
+        """STABILITY PATCH: Safe Load"""
         if os.path.exists(self.STATS_FILE):
-            try: with open(self.STATS_FILE, 'r') as f: return json.load(f)
-            except: pass
+            try: 
+                with open(self.STATS_FILE, 'r') as f: return json.load(f)
+            except: 
+                pass
         return {"wins": 0, "losses": 0, "history": []}
 
     def _save_stats(self):
-        try: with open(self.STATS_FILE, 'w') as f: json.dump(self.stats, f)
-        except: pass
+        try: 
+            with open(self.STATS_FILE, 'w') as f: json.dump(self.stats, f, indent=4)
+        except: 
+            pass
 
     def _record_trade(self, coin, pnl, outcome):
         self.stats['history'].insert(0, {
@@ -38,68 +47,80 @@ class DeepSea:
         self.secured_coins = [] 
 
         current_coins = [p['coin'] for p in positions]
-        # Clean up old price trackers
-        for c in list(self.highest_prices.keys()):
-            if c not in current_coins: del self.highest_prices[c]
+        
+        # Clean up old trackers
+        for c in list(self.highest_rois.keys()):
+            if c not in current_coins: del self.highest_rois[c]
 
         for p in positions:
             coin = p['coin']
             size = float(p['size'])
             entry = float(p['entry'])
             pnl = float(p['pnl'])
-            
+            margin = float(p.get('margin', 1.0))
+            if margin == 0: margin = 1.0 # Prevent div/0
+
             if size == 0: continue
-
-            # 1. Get Live Price
-            curr_price = vision_module.get_price(coin)
-            if curr_price == 0: continue
-
-            # 2. Update Highest Price Seen (The "High Water Mark")
-            if coin not in self.highest_prices: self.highest_prices[coin] = max(entry, curr_price)
-            if curr_price > self.highest_prices[coin]: self.highest_prices[coin] = curr_price
             
-            high_water = self.highest_prices[coin]
+            # Calculate Current ROI
+            current_roi = (pnl / margin) * 100
 
-            # 3. Determine Trail Gap based on Type
+            # 1. Update High Water Mark (ROI based)
+            if coin not in self.highest_rois: self.highest_rois[coin] = current_roi
+            if current_roi > self.highest_rois[coin]: self.highest_rois[coin] = current_roi
+            
+            high_water_roi = self.highest_rois[coin]
+
+            # 2. Determine Hard Stop based on Type
             c_type = fleet_config.get(coin, {}).get('type', 'MEME')
             
-            # PRINCES: 3% Hard Stop, Trailing 1.5%
-            # MEMES:   5% Hard Stop, Trailing 2.0% (Looser)
             if c_type == 'PRINCE':
-                trail_percent = 0.015
-                hard_stop_pct = 0.03
+                hard_stop_roi = -6.0
             else:
-                trail_percent = 0.020 
-                hard_stop_pct = 0.05
+                hard_stop_roi = -8.0
 
-            # 4. Calculate Dynamic Stop Price
-            # The stop is "Trail Percent" below the Highest Price Seen
-            trailing_stop_price = high_water * (1 - trail_percent)
+            # 3. Calculate Dynamic Trail Gap
+            # Default Trail: 3%
+            trail_gap = 3.0
             
-            # 5. Calculate Hard Stop Price (Fixed from Entry)
-            hard_stop_price = entry * (1 - hard_stop_pct)
+            # Step 1: Above 5% ROI -> Tighten to 1.5%
+            if high_water_roi >= 5.0:
+                trail_gap = 1.5
+            
+            # Step 2: Above 12% ROI -> Tighten to 0.5%
+            if high_water_roi >= 12.0:
+                trail_gap = 0.5
 
-            # The effective stop is whichever is HIGHER (safer)
-            # This ensures we respect the hard stop initially, but the trail takes over if price pumps.
-            effective_stop = max(hard_stop_price, trailing_stop_price)
+            # 4. Calculate Trigger ROI
+            # The trigger is the High Water Mark minus the Gap
+            trigger_roi = high_water_roi - trail_gap
 
-            # --- DASHBOARD STATUS ---
-            # If our effective stop is above our entry, we are "Secured" (In Profit)
-            if effective_stop > entry:
+            # 5. Breakeven Override
+            # If we hit 0.40% ROI, the stop must at least be Break Even (0%)
+            # We ensure the trigger never drops below 0 if we passed 0.4%
+            if high_water_roi >= 0.40:
+                trigger_roi = max(0.0, trigger_roi)
                 self.secured_coins.append(coin)
 
             # --- EXECUTION CHECK ---
-            if curr_price < effective_stop:
-                tag = "STOP LOSS" if curr_price < entry else "TRAIL SECURED"
-                outcome = "LOSS" if curr_price < entry else "WIN"
-                
+            
+            # A. Check Hard Stop (Emergency)
+            if current_roi <= hard_stop_roi:
                 if hands:
-                    print(f">> 📉 CLOSING {coin} @ {curr_price} (Trigger: {effective_stop:.4f})")
-                    # Close Full Position
-                    size_usd = abs(size) * curr_price
-                    hands.place_market_order(coin, "SELL" if size > 0 else "BUY", size_usd)
-                    self._record_trade(coin, pnl, outcome)
-                
-                events.append(f"💰 {tag}: {coin} (${pnl:.2f})")
+                    print(f">> 💀 HARD STOP: {coin} @ {current_roi:.2f}%")
+                    hands.place_market_order(coin, "SELL" if size > 0 else "BUY", abs(size), reduce_only=True)
+                    self._record_trade(coin, pnl, "LOSS")
+                    events.append(f"💀 HARD STOP: {coin} cut at {current_roi:.2f}%")
+                continue # Skip trailing check if hard stop hit
+
+            # B. Check Trailing Stop
+            # Only trigger if current ROI fell below the calculated trigger AND we are in profit zone (or passed BE)
+            # The logic: If High Water is 10%, Gap is 1.5%, Trigger is 8.5%. If Current is 8.4%, SELL.
+            if current_roi <= trigger_roi and high_water_roi >= 0.40:
+                 if hands:
+                    print(f">> 📉 TRAIL HIT: {coin} @ {current_roi:.2f}% (High: {high_water_roi:.2f}% | Gap: {trail_gap}%)")
+                    hands.place_market_order(coin, "SELL" if size > 0 else "BUY", abs(size), reduce_only=True)
+                    self._record_trade(coin, pnl, "WIN")
+                    events.append(f"💰 TRAIL SECURED: {coin} at {current_roi:.2f}% ROI")
 
         return events
