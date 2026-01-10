@@ -55,56 +55,15 @@ def format_signal(signal):
     return s
 
 # ==========================================
-# 3. SIDEBAR
+# 3. STATIC LAYOUT (Draws Only Once)
 # ==========================================
-def render_sidebar(last_update):
-    st.sidebar.title("🛡️ Luma Guardian")
-    
-    if last_update:
-        st.sidebar.success(f"⚡ Connected: {last_update}")
-        st.sidebar.caption(f"Reading from: {DATA_DIR}")
-    else:
-        st.sidebar.error("⚠️ Disconnected")
+# This section runs once on load, creating the "Skeleton"
+# preventing the page from wiping clean every update.
 
-    st.sidebar.markdown("---")
-    
-    stats = load_json(STATS_FILE)
-    if not stats:
-        st.sidebar.info("Initializing Stats...")
-        return
+# Sidebar
+sidebar_placeholder = st.sidebar.empty()
 
-    wins = stats.get("wins", 0)
-    losses = stats.get("losses", 0)
-    total = wins + losses
-    win_rate = (wins / total * 100) if total > 0 else 0.0
-
-    c1, c2 = st.sidebar.columns(2)
-    c1.metric("Wins", wins)
-    c2.metric("Losses", losses)
-    st.sidebar.metric("Win Rate", f"{win_rate:.1f}%")
-    
-    st.sidebar.markdown("### Recent Activity")
-    history = stats.get("history", [])
-    if history:
-        for trade in history[:8]:
-            color = "🟢" if trade['pnl'] > 0 else "🔴"
-            st.sidebar.markdown(
-                f"{color} **{trade['coin']}** (${trade['pnl']})",
-                unsafe_allow_html=True
-            )
-
-# ==========================================
-# 4. MAIN DASHBOARD RENDER
-# ==========================================
-data = load_json(STATE_FILE)
-
-last_update_time = None
-if os.path.exists(STATE_FILE):
-    t = os.path.getmtime(STATE_FILE)
-    last_update_time = datetime.datetime.fromtimestamp(t).strftime('%H:%M:%S')
-
-render_sidebar(last_update_time)
-
+# Custom CSS
 st.markdown("""
 <style>
     .terminal-box { 
@@ -122,95 +81,153 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-mode = data.get('mode', 'STANDARD') if data else 'STANDARD'
-st.title(f"LUMA SINGULARITY COMMAND [{mode}]")
+# Title Area
+title_placeholder = st.empty()
 
-if data:
-    # --- A. METRICS ---
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Equity", f"${data.get('equity', 0):,.2f}")
-    c2.metric("Cash", f"${data.get('cash', 0):,.2f}")
-    c3.metric("PnL Season", f"${data.get('pnl', 0):,.2f}")
-    roe_val = data.get('account_roe', 0.0)
-    c4.metric("Account ROE", f"{roe_val:.2f}%", delta=roe_val)
-    c5.metric("Market Session", data.get('session', 'OFFLINE'))
+# A. Metrics Area
+metrics_placeholder = st.empty()
+st.divider()
 
-    st.divider()
+# B. Scanner Area
+st.subheader("📡 Velocity Scanner (Live Feed)")
+scanner_placeholder = st.empty()
+st.divider()
 
-    # --- B. SCANNER ---
-    st.subheader("📡 Velocity Scanner (Live Feed)")
-    scan_raw = data.get('scan_results', [])
+# C. Positions Area
+st.subheader("⚡ Active Positions")
+positions_placeholder = st.empty()
+st.divider()
+
+# D. Logs Area
+st.subheader("📟 System Logs")
+logs_placeholder = st.empty()
+
+# ==========================================
+# 4. LIVE UPDATE LOOP
+# ==========================================
+while True:
+    data = load_json(STATE_FILE)
+    stats = load_json(STATS_FILE)
     
-    if scan_raw:
-        df = pd.DataFrame(scan_raw)
-        df['Symbol'] = df['coin']
-        df['Signal'] = df['quality'].apply(format_signal)
-        df['Price'] = df['price']
-        df['Hard Sell'] = df['price'].apply(calculate_hard_sell)
+    # --- UPDATE SIDEBAR ---
+    with sidebar_placeholder.container():
+        st.title("🛡️ Luma Guardian")
         
-        # [FIX] Set width="stretch" as required by your version
-        st.dataframe(
-            df[['Symbol', 'Signal', 'Price', 'Hard Sell']],
-            column_config={
-                "Symbol": st.column_config.TextColumn("Asset", width="small"),
-                "Signal": st.column_config.TextColumn("Luma Signal", width="medium"),
-                "Price": st.column_config.NumberColumn(format="$%.4f"),
-                "Hard Sell": st.column_config.NumberColumn(format="$%.4f", help="-2% Liquid Projection"),
-            },
-            hide_index=True,
-            width="stretch"
-        )
+        if data:
+            st.success(f"⚡ Connected")
+            st.caption(f"Reading: {DATA_DIR}")
+        else:
+            st.error("⚠️ Disconnected")
+
+        st.markdown("---")
+        
+        if stats:
+            wins = stats.get("wins", 0)
+            losses = stats.get("losses", 0)
+            total = wins + losses
+            win_rate = (wins / total * 100) if total > 0 else 0.0
+
+            c1, c2 = st.columns(2)
+            c1.metric("Wins", wins)
+            c2.metric("Losses", losses)
+            st.metric("Win Rate", f"{win_rate:.1f}%")
+            
+            st.markdown("### Recent Activity")
+            history = stats.get("history", [])
+            if history:
+                for trade in history[:8]:
+                    color = "🟢" if trade['pnl'] > 0 else "🔴"
+                    st.markdown(
+                        f"{color} **{trade['coin']}** (${trade['pnl']})",
+                        unsafe_allow_html=True
+                    )
+
+    # --- UPDATE MAIN CONTENT ---
+    if data:
+        # Title
+        mode = data.get('mode', 'STANDARD')
+        title_placeholder.title(f"LUMA SINGULARITY COMMAND [{mode}]")
+
+        # A. Metrics
+        with metrics_placeholder.container():
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("Equity", f"${data.get('equity', 0):,.2f}")
+            c2.metric("Cash", f"${data.get('cash', 0):,.2f}")
+            c3.metric("PnL Season", f"${data.get('pnl', 0):,.2f}")
+            roe_val = data.get('account_roe', 0.0)
+            c4.metric("Account ROE", f"{roe_val:.2f}%", delta=roe_val)
+            c5.metric("Market Session", data.get('session', 'OFFLINE'))
+
+        # B. Scanner
+        with scanner_placeholder.container():
+            scan_raw = data.get('scan_results', [])
+            if scan_raw:
+                df = pd.DataFrame(scan_raw)
+                df['Symbol'] = df['coin']
+                df['Signal'] = df['quality'].apply(format_signal)
+                df['Price'] = df['price']
+                df['Hard Sell'] = df['price'].apply(calculate_hard_sell)
+                
+                st.dataframe(
+                    df[['Symbol', 'Signal', 'Price', 'Hard Sell']],
+                    column_config={
+                        "Symbol": st.column_config.TextColumn("Asset", width="small"),
+                        "Signal": st.column_config.TextColumn("Luma Signal", width="medium"),
+                        "Price": st.column_config.NumberColumn(format="$%.4f"),
+                        "Hard Sell": st.column_config.NumberColumn(format="$%.4f", help="-2% Liquid Projection"),
+                    },
+                    hide_index=True,
+                    width="stretch"
+                )
+            else:
+                st.info("Scanner initializing... Waiting for first pulse.")
+
+        # C. Positions
+        with positions_placeholder.container():
+            positions = data.get('positions', [])
+            secured_coins = data.get('secured_coins', [])
+            
+            if positions:
+                pos_df = pd.DataFrame(positions)
+                pos_df['Margin'] = (pos_df['entry'] * pos_df['size'].abs()) / 5
+                def safe_roe(row):
+                    if row['Margin'] == 0: return 0.0
+                    return (row['pnl'] / row['Margin']) * 100
+
+                pos_df['ROE'] = pos_df.apply(safe_roe, axis=1)
+                pos_df['Status'] = pos_df['coin'].apply(lambda x: "🔒 SECURED" if x in secured_coins else "🌊 RISK ON")
+
+                st.dataframe(
+                    pos_df,
+                    column_config={
+                        "coin": "Symbol",
+                        "Status": st.column_config.TextColumn("Risk Status", width="medium"),
+                        "Margin": st.column_config.NumberColumn("Margin ($)", format="$%.2f"),
+                        "size": st.column_config.NumberColumn("Size (Coins)", format="%.4f"),
+                        "entry": st.column_config.NumberColumn("Entry", format="$%.4f"),
+                        "pnl": st.column_config.NumberColumn("PnL ($)", format="$%.2f"),
+                        "ROE": st.column_config.NumberColumn("ROE (%)", format="%.2f %%"),
+                    },
+                    hide_index=True,
+                    width="stretch"
+                )
+            else:
+                st.write("No active positions.")
+
+        # D. Logs
+        with logs_placeholder.container():
+            logs = data.get('logs', [])
+            if logs:
+                log_content = "\n".join(logs[:50]) 
+                st.markdown(f'<div class="terminal-box">{log_content}</div>', unsafe_allow_html=True)
+            else:
+                st.text("Waiting for system logs...")
+
     else:
-        st.info("Scanner initializing... Waiting for first pulse.")
+        # Fallback if file not ready yet
+        title_placeholder.title("LUMA SINGULARITY COMMAND [BOOTING]")
+        metrics_placeholder.warning("Connecting to Main Loop...")
 
-    st.divider()
-
-    # --- C. POSITIONS ---
-    st.subheader("⚡ Active Positions")
-    positions = data.get('positions', [])
-    secured_coins = data.get('secured_coins', [])
-
-    if positions:
-        pos_df = pd.DataFrame(positions)
-        pos_df['Margin'] = (pos_df['entry'] * pos_df['size'].abs()) / 5
-        def safe_roe(row):
-            if row['Margin'] == 0: return 0.0
-            return (row['pnl'] / row['Margin']) * 100
-
-        pos_df['ROE'] = pos_df.apply(safe_roe, axis=1)
-        pos_df['Status'] = pos_df['coin'].apply(lambda x: "🔒 SECURED" if x in secured_coins else "🌊 RISK ON")
-
-        st.dataframe(
-            pos_df,
-            column_config={
-                "coin": "Symbol",
-                "Status": st.column_config.TextColumn("Risk Status", width="medium"),
-                "Margin": st.column_config.NumberColumn("Margin ($)", format="$%.2f"),
-                "size": st.column_config.NumberColumn("Size (Coins)", format="%.4f"),
-                "entry": st.column_config.NumberColumn("Entry", format="$%.4f"),
-                "pnl": st.column_config.NumberColumn("PnL ($)", format="$%.2f"),
-                "ROE": st.column_config.NumberColumn("ROE (%)", format="%.2f %%"),
-            },
-            hide_index=True,
-            width="stretch"
-        )
-    else:
-        st.write("No active positions.")
-
-    st.divider()
-
-    # --- D. LOGS ---
-    st.subheader("📟 System Logs")
-    logs = data.get('logs', [])
-    if logs:
-        log_content = "\n".join(logs[:50]) 
-        st.markdown(f'<div class="terminal-box">{log_content}</div>', unsafe_allow_html=True)
-    else:
-        st.text("Waiting for system logs...")
-else:
-    st.warning(f"Connecting to Main Loop... Looking in: {STATE_FILE}")
-    if not os.path.exists(STATE_FILE):
-        st.error(f"File NOT found at {STATE_FILE}. Waiting for main.py to create it.")
-
-time.sleep(1) 
-st.rerun()
+    # Wait before next update inside the loop
+    # This keeps the browser connection open and avoids full page reload
+    time.sleep(1)
