@@ -5,3 +5,4 @@ streamlit
 pandas
 watchdog
 web3
+google-generativeai
