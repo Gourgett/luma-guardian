@@ -6,27 +6,34 @@ import warnings
 from collections import deque
 from datetime import datetime, timezone
 
-# --- RAILWAY CONFIGURATION ---
-# We prioritize Environment Variables (Railway) over local files
-def get_env(key, default=None):
-    return os.getenv(key, default)
+# IMPORT MODULES
+try:
+    from vision import Vision
+    from predator import Predator
+    from deep_sea import DeepSea
+    from xenomorph import Xenomorph
+    from smart_money import SmartMoney
+except ImportError as e:
+    print(f">> CRITICAL ERROR: Missing Module {e}")
+    sys.exit(1)
 
-# 1. SETUP PATHS (Critical for Railway Persistence)
-# Railway often requires writing to specific temp or data directories
-BASE_DIR = os.getcwd()
-DATA_DIR = os.path.join(BASE_DIR, "data")
+warnings.simplefilter("ignore")
 
-# Create data directory if it doesn't exist
+# ==============================================================================
+#  LUMA SINGULARITY [TIER: FINAL ARCHITECT]
+#  Logic: Recovery (<412) | Standard (>412) | God (>12% ROE)
+# ==============================================================================
+
+DATA_DIR = "/app/data" if os.path.exists("/app/data") else "."
 if not os.path.exists(DATA_DIR):
-    try:
-        os.makedirs(DATA_DIR)
-    except OSError:
-        # Fallback to tmp if permission denied
-        DATA_DIR = "/tmp"
+    try: os.makedirs(DATA_DIR)
+    except: pass
 
 DASHBOARD_FILE = os.path.join(DATA_DIR, "dashboard_state.json")
+STARTING_EQUITY = 412.0
+MIN_EQUITY_THRESHOLD = 150.0
 
-# 2. FLEET CONFIGURATION (The Blue Princes)
+# --- FLEET CONFIG ---
 FLEET_CONFIG = {
     "SOL":   {"type": "PRINCE", "lev": 5},
     "SUI":   {"type": "PRINCE", "lev": 5},
@@ -36,153 +43,141 @@ FLEET_CONFIG = {
     "PENGU": {"type": "MEME",   "lev": 5}
 }
 
-EVENT_QUEUE = deque(maxlen=20)
-warnings.simplefilter("ignore")
+# Increased queue size for Verbose Logs
+EVENT_QUEUE = deque(maxlen=50)
 
-def save_dashboard(mode, session, equity, cash, positions, scan_data, logs):
-    """Saves the JSON state for app.py to read."""
+def load_config():
+    # Prioritize Railway Env Vars
+    pk = os.environ.get("PRIVATE_KEY")
+    wallet = os.environ.get("WALLET_ADDRESS")
+    if not pk:
+        try:
+            with open("server_config.json", 'r') as f: return json.load(f)
+        except: return None
+    return {"wallet_address": wallet, "private_key": pk}
+
+def save_dashboard_state(mode, session, equity, cash, positions, scan_results, logs):
     try:
-        pnl = equity - float(get_env("STARTING_EQUITY", 412.0))
-        roe = (pnl / float(get_env("STARTING_EQUITY", 412.0))) * 100
-
-        data = {
+        dash_state = {
             "mode": mode,
             "session": session,
             "equity": round(equity, 2),
             "cash": round(cash, 2),
-            "pnl": round(pnl, 2),
-            "account_roe": round(roe, 2),
+            "pnl": round(equity - STARTING_EQUITY, 2),
+            "account_roe": round(((equity - STARTING_EQUITY) / STARTING_EQUITY) * 100, 2),
             "positions": positions,
-            "scan_results": scan_data,
-            "logs": list(logs),
-            "updated": time.time()
+            "scan_results": scan_results,
+            "logs": list(logs) # Saves the full log history
         }
-        
-        # Atomic write to prevent file corruption
+        # Atomic Write
         temp_file = DASHBOARD_FILE + ".tmp"
         with open(temp_file, 'w') as f:
-            json.dump(data, f)
+            json.dump(dash_state, f)
         os.replace(temp_file, DASHBOARD_FILE)
-        
     except Exception as e:
-        print(f"xx DASHBOARD SAVE ERROR: {e}")
+        print(f"xx STATE SAVE ERROR: {e}")
 
 def main():
-    print(">> SYSTEM BOOT: LUMA SINGULARITY (RAILWAY PROTOCOL)")
-    print(f">> STORAGE PATH: {DASHBOARD_FILE}")
-
-    # 1. LOAD MODULES & INJECT CONFIG
-    # We create a config dict from Env Vars to pass to modules
-    railway_config = {
-        "private_key": get_env("PRIVATE_KEY"),
-        "wallet_address": get_env("WALLET_ADDRESS"),
-        "rpc_url": get_env("RPC_URL", "https://api.hyperliquid.xyz/info"),
-        "discord_webhook": get_env("DISCORD_WEBHOOK")
-    }
-
+    print(">> SYSTEM BOOT: LUMA SINGULARITY (VERBOSE MODE)")
+    
+    conf = load_config()
+    # Late import to avoid circular dependency crashes
     try:
         from hands import Hands
-        from vision import Vision
-        from predator import Predator
-        from deep_sea import DeepSea
-        from xenomorph import Xenomorph
         from messenger import Messenger
-    except ImportError as e:
-        print(f">> CRITICAL MISSING MODULE: {e}")
-        sys.exit(1)
-
-    # 2. INITIALIZE MODULES (Robust)
-    try:
-        # Pass the railway config directly to Hands if it accepts it, 
-        # otherwise Hands should look for os.getenv internally.
-        hands = Hands(config=railway_config)
+        hands = Hands(config=conf)
+        messenger = Messenger()
     except Exception as e:
-        print(f">> HANDS INIT ERROR: {e}")
+        print(f">> WARNING: Hands/Messenger Init Failed: {e}")
         hands = None
+        messenger = None
 
     vision = Vision()
     predator = Predator()
     xenomorph = Xenomorph()
-    messenger = Messenger()
-
-    # 3. STATE VARIABLES
-    equity = float(get_env("STARTING_EQUITY", 412.0))
+    
+    equity = STARTING_EQUITY
     cash = 0.0
     positions = []
     mode = "STANDARD"
+    session = "LONDON/NY"
 
-    # 4. MAIN LOOP
     while True:
         try:
-            # --- A. UPDATE ACCOUNT (If Hands is Alive) ---
-            if hands and hasattr(hands, 'wallet_address') and hands.wallet_address:
-                try:
-                    # Logic assumes Vision can fetch user state using the address
-                    # Note: You might need to adjust this depending on your Vision.py logic
-                    acct = vision.get_user_state(hands.wallet_address)
-                    if acct:
-                        equity = float(acct.get("marginSummary", {}).get("accountValue", equity))
-                        cash = float(acct.get("withdrawable", 0.0))
-                        
-                        raw_pos = acct.get("assetPositions", [])
-                        positions = []
-                        for p in raw_pos:
-                            pos = p.get("position", {})
-                            sz = float(pos.get("szi", 0))
-                            if sz != 0:
-                                positions.append({
-                                    "coin": pos.get("coin"),
-                                    "size": sz,
-                                    "entry": float(pos.get("entryPx", 0)),
-                                    "pnl": float(pos.get("unrealizedPnl", 0))
-                                })
-                except Exception as e:
-                    print(f"xx ACCOUNT SYNC ERROR: {e}")
-            else:
-                # If hands failed, we just log it but KEEP RUNNING the scanner
-                if "⚠️ Wallet Disconnected" not in EVENT_QUEUE:
-                    EVENT_QUEUE.append("⚠️ Wallet Disconnected - View Only")
+            # 1. MARKET PULSE
+            if hands and hands.wallet_address:
+                acct = vision.get_user_state(hands.wallet_address)
+                if acct:
+                    equity = float(acct.get("marginSummary", {}).get("accountValue", equity))
+                    cash = float(acct.get("withdrawable", 0.0))
+                    
+                    raw_pos = acct.get("assetPositions", [])
+                    positions = []
+                    for p in raw_pos:
+                        pos = p.get("position", {})
+                        sz = float(pos.get("szi", 0))
+                        if sz != 0:
+                            positions.append({
+                                "coin": pos.get("coin"),
+                                "size": sz,
+                                "entry": float(pos.get("entryPx", 0)),
+                                "pnl": float(pos.get("unrealizedPnl", 0))
+                            })
 
-            # --- B. DETERMINE SESSION ---
-            h = datetime.now(timezone.utc).hour
-            if 7 <= h < 15: session = "LONDON/NY"
-            elif 15 <= h < 21: session = "NY CLOSE"
-            else: session = "ASIA"
-
-            # --- C. SCANNER LOOP ---
-            scan_results = []
+            # 2. SCANNER LOOP
+            scan_data_for_dashboard = [] 
             
             for coin in FLEET_CONFIG:
-                # Log Pulse
-                print(f">> Scanning {coin}...")
+                # --- VERBOSE LOGGING START ---
+                t = datetime.now().strftime("%H:%M:%S")
+                log_msg = f"[{t}] 🔍 SCANNING {coin}..."
+                print(f">> {log_msg}")
+                EVENT_QUEUE.appendleft(log_msg) # Add to Dashboard Log
                 
-                # Fetch Data
+                # Immediate Save so Dashboard updates "Scanning..." in real time
+                save_dashboard_state(mode, session, equity, cash, positions, scan_data_for_dashboard, EVENT_QUEUE)
+                # -----------------------------
+
                 candles = vision.get_candles(coin, "15m")
-                if not candles: continue
+                if not candles: 
+                    EVENT_QUEUE.appendleft(f"[{t}] ⚠️ {coin}: No Data")
+                    continue
                 
                 curr_price = float(candles[-1]['c'])
-                curr_vol = float(candles[-1]['v'])
-
-                # Analyze
-                sig = predator.analyze_divergence(candles, coin) or "NEUTRAL"
+                quality = predator.analyze_divergence(candles, coin) or "WAITING"
                 
-                scan_results.append({
+                # Logic: If Xenomorph is active, override
+                xeno_sig = xenomorph.hunt(coin, candles)
+                if xeno_sig == "ATTACK": quality = "⚔️ BREAKOUT"
+
+                # Append Result to Log
+                if quality != "WAITING":
+                    EVENT_QUEUE.appendleft(f"[{t}] 🎯 {coin}: {quality}")
+                
+                scan_data_for_dashboard.append({
                     "coin": coin,
                     "price": curr_price,
-                    "vol_m": round(curr_vol / 1_000_000, 2),
-                    "quality": sig
+                    "vol_m": round(float(candles[-1]['v']) / 1000000, 2),
+                    "quality": quality,
+                    "liquidity_price": 0.0 
                 })
+
+                # --- EXECUTION BLOCK ---
+                # This ensures we actually trade if Hands is ready
+                if quality == "REAL_PUMP" or xeno_sig == "ATTACK":
+                    if hands:
+                        print(f">> EXECUTING ON {coin}")
+                        # hands.place_trap(coin, "BUY", curr_price, 50.0) # Uncomment to arm
                 
-                time.sleep(0.5)
+                time.sleep(0.5) 
 
-            # --- D. SAVE STATE ---
-            save_dashboard(mode, session, equity, cash, positions, scan_results, EVENT_QUEUE)
-            print(f">> CYCLE COMPLETE. Eq: ${equity:.2f}")
-            time.sleep(10)
+            # 3. SAVE CYCLE END
+            save_dashboard_state(mode, session, equity, cash, positions, scan_data_for_dashboard, EVENT_QUEUE)
+            
+            # 4. SLEEP
+            print(f">> CYCLE PAUSE. Eq: ${equity:.2f}")
+            time.sleep(5) 
 
-        except KeyboardInterrupt:
-            print("\n>> SHUTDOWN.")
-            break
         except Exception as e:
             print(f"xx LOOP ERROR: {e}")
             time.sleep(5)
