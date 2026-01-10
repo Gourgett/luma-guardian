@@ -7,7 +7,7 @@ import os
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-st.set_page_config(page_title="Luma Command v2.7", layout="wide", page_icon="🛡️")
+st.set_page_config(page_title="Luma Command v2.9", layout="wide", page_icon="🛡️")
 
 # [LUMA MEMORY] Hard Sell Logic
 HARD_SELL_PERCENT = 0.02 
@@ -19,12 +19,11 @@ def calculate_hard_sell(price):
 # ==========================================
 # 2. DATA LOADING
 # ==========================================
-# Matches your Railway/Main.py paths
 DATA_DIR = "data"
 STATE_FILE = os.path.join(DATA_DIR, "dashboard_state.json")
 STATS_FILE = os.path.join(DATA_DIR, "stats.json")
 
-# Fallback for local testing
+# Fallback for local
 if not os.path.exists(STATE_FILE): STATE_FILE = "dashboard_state.json"
 if not os.path.exists(STATS_FILE): STATS_FILE = "stats.json"
 
@@ -35,11 +34,7 @@ def load_json(filepath):
     except: return None
 
 def format_signal(signal):
-    """
-    Maps raw Xenomorph/Predator signals to UI labels.
-    """
     s = str(signal).upper()
-    
     if "ATTACK" in s:      return "⚔️ ATTACK"
     if "WHALE" in s:       return "🐋 WHALE ALERT"
     if "FAKE" in s:        return "⚠️ FAKE PUMP"
@@ -48,8 +43,7 @@ def format_signal(signal):
     if "SELL" in s:        return "🔴 SELL"
     if "NEUTRAL" in s:     return "Scanning..."
     if "WAITING" in s:     return "Scanning..."
-    
-    return s # Return raw signal if no match (e.g. "Scanning...")
+    return s
 
 # ==========================================
 # 3. SIDEBAR (History)
@@ -75,7 +69,6 @@ def render_sidebar():
     
     st.sidebar.markdown("### Recent Activity")
     history = stats.get("history", [])
-    
     if history:
         for trade in history[:8]:
             color = "🟢" if trade['pnl'] > 0 else "🔴"
@@ -90,7 +83,7 @@ def render_sidebar():
 data = load_json(STATE_FILE)
 render_sidebar()
 
-# Custom CSS for the Terminal Log
+# Custom CSS for Terminal
 st.markdown("""
 <style>
     .terminal-box { 
@@ -100,44 +93,45 @@ st.markdown("""
         background-color: #0e0e0e; 
         padding: 15px; 
         border-radius: 5px; 
-        border: 1px solid #333;
         height: 250px; 
         overflow-y: scroll; 
         white-space: pre-wrap;
     }
+    div[data-testid="stMetricValue"] { font-size: 1.4rem; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("LUMA SINGULARITY COMMAND")
+# DYNAMIC TITLE (Based on Mode)
+mode = data.get('mode', 'STANDARD') if data else 'STANDARD'
+st.title(f"LUMA SINGULARITY COMMAND [{mode}]")
 
 if data:
-    # --- A. METRICS ---
-    c1, c2, c3, c4 = st.columns(4)
+    # --- A. METRICS HEADER (5 COLUMNS) ---
+    c1, c2, c3, c4, c5 = st.columns(5)
+    
     c1.metric("Equity", f"${data.get('equity', 0):,.2f}")
     c2.metric("Cash", f"${data.get('cash', 0):,.2f}")
     c3.metric("PnL Season", f"${data.get('pnl', 0):,.2f}")
-    c4.metric("Market Mode", data.get('mode', 'STANDARD'))
+    
+    # Restored Metrics
+    roe_val = data.get('account_roe', 0.0)
+    c4.metric("Account ROE", f"{roe_val:.2f}%", delta=roe_val)
+    c5.metric("Market Session", data.get('session', 'OFFLINE'))
 
     st.divider()
 
     # --- B. VELOCITY SCANNER ---
     st.subheader("📡 Velocity Scanner (Live Feed)")
-    
     scan_raw = data.get('scan_results', [])
+    
     if scan_raw:
         df = pd.DataFrame(scan_raw)
-        
-        # 1. Map Columns
         df['Symbol'] = df['coin']
-        
-        # 2. Apply Custom Signal Formatter (Whale, Attack, Fake Pump)
         df['Signal'] = df['quality'].apply(format_signal)
-        
         df['Price'] = df['price']
         df['Vol (M)'] = df['vol_m']
         df['Hard Sell'] = df['price'].apply(calculate_hard_sell)
         
-        # 3. Render Table
         st.dataframe(
             df[['Symbol', 'Signal', 'Price', 'Vol (M)', 'Hard Sell']],
             use_container_width=True,
@@ -158,15 +152,22 @@ if data:
     # --- C. LIVE POSITIONS ---
     st.subheader("⚡ Active Positions")
     positions = data.get('positions', [])
+    secured_coins = data.get('secured_coins', [])
+
     if positions:
         pos_df = pd.DataFrame(positions)
-        # Calculate ROE approx if not provided
+        # ROE Calc
         pos_df['ROE'] = (pos_df['pnl'] / (pos_df['entry'] * pos_df['size'].abs() / 5)) * 100 
+        # Status Check
+        pos_df['Status'] = pos_df['coin'].apply(
+            lambda x: "🔒 SECURED" if x in secured_coins else "🌊 RISK ON"
+        )
 
         st.dataframe(
             pos_df,
             column_config={
                 "coin": "Symbol",
+                "Status": st.column_config.TextColumn("Risk Status", width="medium"),
                 "size": "Size",
                 "entry": st.column_config.NumberColumn("Entry", format="$%.4f"),
                 "pnl": st.column_config.NumberColumn("PnL ($)", format="$%.2f"),
@@ -180,13 +181,11 @@ if data:
 
     st.divider()
 
-    # --- D. SYSTEM LOGS (TERMINAL) ---
+    # --- D. SYSTEM LOGS ---
     st.subheader("📟 System Logs")
     logs = data.get('logs', [])
     if logs:
-        # Join logs with newlines
         log_content = "\n".join(logs)
-        # Render as raw HTML div for styling (The "Terminal" look)
         st.markdown(f'<div class="terminal-box">{log_content}</div>', unsafe_allow_html=True)
     else:
         st.text("Waiting for system logs...")
@@ -194,6 +193,6 @@ if data:
 else:
     st.warning("Connecting to Main Loop... (Check if main.py is running)")
 
-# Auto-Refresh (Matches Pulse Speed)
+# Auto-Refresh (Static Layout)
 time.sleep(1) 
 st.rerun()
