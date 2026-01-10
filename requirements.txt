@@ -1,7 +1,6 @@
 eth-account
 requests
 hyperliquid-python-sdk
-google-generativeai
 streamlit
 pandas
 watchdog
